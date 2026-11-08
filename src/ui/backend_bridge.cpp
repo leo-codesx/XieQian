@@ -107,7 +107,7 @@ BackendBridge::BackendBridge(QObject *parent)
     }
 
     aiManager_->setApiConfig(aiApiKey_, aiBaseUrl_, aiModel_);
-    drawEngine_->setDynamicWeights(dynamicWeights_);
+    // 动态权重由 BackendBridge 在抽奖前用冻结快照计算，DrawEngine 保持纯加权采样，避免二次衰减。
 
     saveTimer_ = new QTimer(this);
     saveTimer_->setSingleShot(true);
@@ -336,7 +336,6 @@ bool BackendBridge::readState()
     }
 
     drawEngine_->clearDrawnHistory();
-    drawEngine_->setDynamicWeights(dynamicWeights_);
     aiManager_->setApiConfig(aiApiKey_, aiBaseUrl_, aiModel_);
     return true;
 }
@@ -577,10 +576,19 @@ QString BackendBridge::legacyJsonPath()
 
 QString BackendBridge::drawWinner()
 {
-    const std::vector<xieqian::core::Participant> pool = roster_->enabledParticipants();
+    // 抽奖只读 roster 的冻结快照；动态模式下把有效权重写进快照副本，
+    // 原始名单在开奖前保持不变，避免半途改写导致概率与展示不一致。
+    std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
+    if (dynamicWeights_) {
+        for (xieqian::core::Participant &participant : snapshot) {
+            participant.weight = calculateEffectiveWeight(participant);
+        }
+    }
+
+    const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
     const std::vector<xieqian::core::Participant> winners =
-        dynamicWeights_ ? drawEngine_->drawWithWeights(pool, 1, effectiveWeights(pool))
-                        : drawEngine_->draw(pool, 1, strategyFor());
+        drawEngine_->draw(frozen, 1,
+                          dynamicWeights_ ? xieqian::core::DrawStrategy::Weighted : strategyFor());
     if (winners.empty()) {
         return QStringLiteral("无可用名单");
     }
@@ -596,10 +604,17 @@ QVariantList BackendBridge::drawMultipleWinners()
     QVariantList winners;
     QStringList names;
 
-    const std::vector<xieqian::core::Participant> pool = roster_->enabledParticipants();
+    std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
+    if (dynamicWeights_) {
+        for (xieqian::core::Participant &participant : snapshot) {
+            participant.weight = calculateEffectiveWeight(participant);
+        }
+    }
+
+    const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
     const std::vector<xieqian::core::Participant> picked =
-        dynamicWeights_ ? drawEngine_->drawWithWeights(pool, drawCount_, effectiveWeights(pool))
-                        : drawEngine_->draw(pool, drawCount_, strategyFor());
+        drawEngine_->draw(frozen, drawCount_,
+                          dynamicWeights_ ? xieqian::core::DrawStrategy::Weighted : strategyFor());
     for (const xieqian::core::Participant &participant : picked) {
         const QString name = QString::fromStdString(participant.name);
         names.append(name);
@@ -636,7 +651,6 @@ void BackendBridge::updateDrawSettings(int count, int strategy)
     // 动态权重只对加权策略有意义：切到其它策略时同步关闭，避免开关与概率表里不一
     if (drawStrategy_ != xieqian::core::DrawStrategy::Weighted && dynamicWeights_) {
         dynamicWeights_ = false;
-        drawEngine_->setDynamicWeights(false);
         emit dynamicWeightsChanged();
         changed = true;
     }
@@ -655,18 +669,23 @@ xieqian::core::DrawStrategy BackendBridge::strategyFor() const
     return drawStrategy_;
 }
 
+double BackendBridge::calculateEffectiveWeight(const xieqian::core::Participant &participant) const
+{
+    if (!dynamicWeights_) {
+        return participant.weight;
+    }
+
+    const double base = std::max(0.0, participant.weight);
+    const double decay = std::exp(-static_cast<double>(participant.drawCount) / 3.0);
+    const double streakPenalty = std::max(0.1, 1.0 - static_cast<double>(participant.streak) * 0.2);
+    return base * decay * streakPenalty;
+}
+
 double BackendBridge::effectiveWeight(const xieqian::core::Participant &participant) const
 {
     // 加权模式：扇区宽度 = 真实权重（动态模式下含衰减惩罚）
     if (drawStrategy_ == xieqian::core::DrawStrategy::Weighted) {
-        const double base = std::max(0.0, participant.weight);
-        if (!dynamicWeights_) {
-            return base;
-        }
-
-        const double decay = std::exp(-static_cast<double>(participant.drawCount) / 3.0);
-        const double streakFactor = std::max(0.1, 1.0 - static_cast<double>(participant.streak) * 0.2);
-        return base * decay * streakFactor;
+        return calculateEffectiveWeight(participant);
     }
 
     // 防连抽：已中签者本轮概率为 0，扇区收成 0 宽度；
@@ -679,15 +698,16 @@ double BackendBridge::effectiveWeight(const xieqian::core::Participant &particip
     return 1.0;
 }
 
-std::vector<double>
-BackendBridge::effectiveWeights(const std::vector<xieqian::core::Participant> &pool) const
+double BackendBridge::getEffectiveWeight(const QString &id) const
 {
-    std::vector<double> weights;
-    weights.reserve(pool.size());
-    for (const xieqian::core::Participant &participant : pool) {
-        weights.push_back(effectiveWeight(participant));
+    const std::string key = id.toStdString();
+    for (std::size_t index = 0; index < roster_->size(); ++index) {
+        const xieqian::core::Participant &participant = roster_->at(index);
+        if (xieqian::core::participantId(participant) == key) {
+            return effectiveWeight(participant);
+        }
     }
-    return weights;
+    return 0.0;
 }
 
 void BackendBridge::recordDraw(const std::vector<xieqian::core::Participant> &winners)
@@ -1173,7 +1193,6 @@ void BackendBridge::setDynamicWeights(bool enabled)
     }
 
     dynamicWeights_ = enabled;
-    drawEngine_->setDynamicWeights(enabled);
 
     // 动态权重只对加权策略生效；打开时显式切换到加权，让用户在设置里看得见
     if (enabled && drawStrategy_ != xieqian::core::DrawStrategy::Weighted) {
@@ -1498,7 +1517,6 @@ void BackendBridge::applyData(const QJsonObject &root)
         dynamicWeights_ = false;
     }
 
-    drawEngine_->setDynamicWeights(dynamicWeights_);
     drawEngine_->clearDrawnHistory();
     aiManager_->setApiConfig(aiApiKey_, aiBaseUrl_, aiModel_);
 }

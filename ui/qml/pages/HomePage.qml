@@ -103,9 +103,9 @@ Item {
         for (var i = 0; i < participants.length; ++i) {
             if (participants[i].enabled) {
                 list.push(String(participants[i].name))
-                // effectiveWeight 由后端按策略计算：等概率恒为 1，防连抽给已中签者 0，
-                // 加权策略下计入动态衰减，保证扇区宽度就是真实中奖概率
-                var weight = Number(participants[i].effectiveWeight)
+                // 直接向后端查询有效权重：等概率恒为 1，防连抽给已中签者 0，
+                // 加权策略下由引擎快照公式给出衰减值，保证扇区宽度就是真实中奖概率
+                var weight = Number(backendBridge.getEffectiveWeight(String(participants[i].id)))
                 weights.push(isFinite(weight) && weight >= 0 ? weight : 0)
                 drawn.push(participants[i].isDrawn === true)
             }

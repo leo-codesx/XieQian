@@ -47,6 +47,8 @@ public:
     Q_INVOKABLE void resetDrawStats();
     Q_INVOKABLE void appendHistory(const QString &name);
     Q_INVOKABLE QVariantList getParticipantsWithStatus();
+    // 转盘扇区宽度与真实中奖概率共用同一份有效权重
+    Q_INVOKABLE double getEffectiveWeight(const QString &id) const;
     Q_INVOKABLE void toggleParticipantStatus(int index);
     Q_INVOKABLE void updateParticipantWeight(const QString &id, double weight);
     Q_INVOKABLE bool removeParticipant(const QString &id);
@@ -118,8 +120,8 @@ private:
 
     void recordDraw(const std::vector<xieqian::core::Participant> &winners);
     [[nodiscard]] xieqian::core::DrawStrategy strategyFor() const;
+    [[nodiscard]] double calculateEffectiveWeight(const xieqian::core::Participant &participant) const;
     [[nodiscard]] double effectiveWeight(const xieqian::core::Participant &participant) const;
-    [[nodiscard]] std::vector<double> effectiveWeights(const std::vector<xieqian::core::Participant> &pool) const;
     void applyData(const QJsonObject &root);
     [[nodiscard]] QJsonObject stateToJson() const;
     // 合并短时间内的多次改动后落盘；退出与导入时走同步 flush

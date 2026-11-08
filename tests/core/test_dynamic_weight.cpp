@@ -44,6 +44,14 @@ TEST_CASE("dynamicWeight applies decay and streak penalty", "[draw][weight]") {
     REQUIRE(dynamicWeight(disabledWeight) == 0.0);
 }
 
+TEST_CASE("calculateEffectiveWeight formula for drawCount 6 streak 3", "[draw][weight]") {
+    // 该断言覆盖 calculateEffectiveWeight 使用的同一套引擎层数学：
+    // base * exp(-6 / 3) * max(0.1, 1 - 3 * 0.2)
+    const Participant participant = makeParticipant("E", 2.0, 6, 3);
+    const double expected = 2.0 * std::exp(-2.0) * 0.4;
+    REQUIRE(std::abs(dynamicWeight(participant) - expected) < 1e-12);
+}
+
 TEST_CASE("recordWins bumps winner and resets other streaks", "[roster][weight]") {
     Roster roster;
     roster.add(makeParticipant("A", 1.0, 0, 2));
