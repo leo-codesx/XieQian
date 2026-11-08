@@ -116,10 +116,10 @@ private:
         QStringList options;
     };
 
-    void recordDraw(const QString &name);
-    void recordWinners(const std::vector<xieqian::core::Participant> &winners);
+    void recordDraw(const std::vector<xieqian::core::Participant> &winners);
     [[nodiscard]] xieqian::core::DrawStrategy strategyFor() const;
     [[nodiscard]] double effectiveWeight(const xieqian::core::Participant &participant) const;
+    [[nodiscard]] std::vector<double> effectiveWeights(const std::vector<xieqian::core::Participant> &pool) const;
     void applyData(const QJsonObject &root);
     [[nodiscard]] QJsonObject stateToJson() const;
     // 合并短时间内的多次改动后落盘；退出与导入时走同步 flush

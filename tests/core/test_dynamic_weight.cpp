@@ -84,6 +84,21 @@ TEST_CASE("dynamic mode penalises frequently drawn participants", "[draw][weight
     REQUIRE(hotWins * 4 < static_cast<std::size_t>(rounds));
 }
 
+TEST_CASE("explicit effective weights override participant weights", "[draw][weight]") {
+    std::vector<Participant> pool;
+    pool.push_back(makeParticipant("A", 100.0, 0, 0));
+    pool.push_back(makeParticipant("B", 100.0, 0, 0));
+    pool.push_back(makeParticipant("C", 0.0, 0, 0));
+
+    DrawEngine engine(std::mt19937_64(11));
+    const std::vector<double> weights{0.0, 0.0, 1.0};
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto winners = engine.drawWithWeights(pool, 1, weights);
+        REQUIRE(winners.size() == 1);
+        REQUIRE(winners.front().name == "C");
+    }
+}
+
 TEST_CASE("static mode keeps weights unchanged", "[draw][weight]") {
     std::vector<Participant> pool;
     pool.push_back(makeParticipant("hot", 1.0, 100, 5));

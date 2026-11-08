@@ -82,6 +82,10 @@ Item {
         function onRosterUpdated() {
             page.refresh()
         }
+
+        function onDynamicWeightsChanged() {
+            page.refresh()
+        }
     }
 
     Connections {
@@ -220,6 +224,9 @@ Item {
                         checked: backendBridge.dynamicWeights
                         onToggled: function(value) {
                             backendBridge.dynamicWeights = value
+                            page.refresh()
+                            if (value)
+                                dynamicWeightDialog.open()
                         }
                     }
                 }
@@ -341,7 +348,7 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: "被选中 " + modelData.drawCount + " 次 · 连续 "
+                            text: "已抽中 " + modelData.drawCount + " 次 · 连中 "
                                   + modelData.streak + " 次"
                                   + (modelData.enabled ? "" : " · 已停用")
                             color: Theme.textSecondary
@@ -446,6 +453,81 @@ Item {
     // 未配置 API Key 时的统一引导
     AiKeyDialog {
         id: aiKeyDialog
+    }
+
+    Dialog {
+        id: dynamicWeightDialog
+
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 380
+        padding: 0
+
+        background: Rectangle {
+            radius: Theme.radiusDialog
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.separator
+        }
+
+        contentItem: Column {
+            width: 380
+            spacing: 0
+
+            Column {
+                width: parent.width
+                topPadding: 26
+                leftPadding: 24
+                rightPadding: 24
+                bottomPadding: 22
+                spacing: 10
+
+                Text {
+                    width: parent.width
+                    text: "动态权重已开启"
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontH2
+                    font.weight: Font.Bold
+                }
+
+                Text {
+                    width: parent.width
+                    text: "动态权重已开启，抽奖概率将随时间与中签次数衰减"
+                    color: Theme.textSecondary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Theme.separator
+            }
+
+            Item {
+                width: parent.width
+                height: 52
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "知道了"
+                    color: Theme.primary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    font.weight: Font.DemiBold
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: dynamicWeightDialog.close()
+                }
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -25,6 +25,11 @@ public:
     // 按策略从 pool 中抽取至多 count 名，结果互不重复；count 超过池容量时返回整个池。
     [[nodiscard]] std::vector<Participant> draw(const std::vector<Participant> &pool, int count, DrawStrategy strategy);
 
+    // 按调用方给出的权重抽取：weights 与 pool 一一对应，缺失或非法权重按 0 处理；
+    // 全部权重为 0 时退回等概率，保证池非空时仍能选出结果。
+    [[nodiscard]] std::vector<Participant> drawWithWeights(const std::vector<Participant> &pool, int count,
+                                                           const std::vector<double> &weights);
+
     // 随机分组：打乱名单后均匀分配，各组人数差不超过 1，余数优先补到靠前的组；
     // groupCount 超过池容量时按池容量分组，groupCount 非正或池为空时返回空列表。
     [[nodiscard]] std::vector<std::vector<Participant>> randomGroup(const std::vector<Participant> &pool,
@@ -43,7 +48,8 @@ public:
     [[nodiscard]] bool dynamicWeights() const;
 
 private:
-    [[nodiscard]] std::vector<Participant> drawWeighted(const std::vector<Participant> &pool, std::size_t count);
+    [[nodiscard]] std::vector<Participant> drawWeighted(const std::vector<Participant> &pool, std::size_t count,
+                                                        const std::vector<double> *weights = nullptr);
 
     std::mt19937_64 rng_;
     std::vector<std::string> drawnIds_;

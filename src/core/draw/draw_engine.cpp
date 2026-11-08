@@ -1,6 +1,7 @@
 #include "xieqian/core/draw/draw_engine.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace xieqian::core {
@@ -139,22 +140,46 @@ bool DrawEngine::dynamicWeights() const
     return dynamicWeights_;
 }
 
-std::vector<Participant> DrawEngine::drawWeighted(const std::vector<Participant> &pool, std::size_t count)
+std::vector<Participant> DrawEngine::drawWithWeights(const std::vector<Participant> &pool, int count,
+                                                    const std::vector<double> &weights)
+{
+    if (count <= 0 || pool.empty()) {
+        return {};
+    }
+
+    const auto wanted = std::min(static_cast<std::size_t>(count), pool.size());
+    return drawWeighted(pool, wanted, &weights);
+}
+
+std::vector<Participant> DrawEngine::drawWeighted(const std::vector<Participant> &pool, std::size_t count,
+                                                  const std::vector<double> *weights)
 {
     std::vector<Participant> remaining = pool;
     std::vector<Participant> winners;
     winners.reserve(count);
 
+    // 显式权重与 remaining 同步删除，避免抽走一人后下标错位到别人身上
+    std::vector<double> remainingWeights;
+    if (weights != nullptr) {
+        remainingWeights.reserve(pool.size());
+        for (std::size_t index = 0; index < pool.size(); ++index) {
+            const double weight = index < weights->size() ? (*weights)[index] : 0.0;
+            remainingWeights.push_back(std::isfinite(weight) ? std::max(0.0, weight) : 0.0);
+        }
+    }
+
     std::uniform_real_distribution<double> unit(0.0, 1.0);
-    const auto weightOf = [this](const Participant &participant) {
-        return dynamicWeights_ ? dynamicWeight(participant)
-                               : std::max(0.0, participant.weight);
+    const auto weightOf = [this, weights, &remainingWeights](std::size_t index, const Participant &participant) {
+        if (weights != nullptr) {
+            return remainingWeights[index];
+        }
+        return dynamicWeights_ ? dynamicWeight(participant) : std::max(0.0, participant.weight);
     };
 
     while (winners.size() < count && !remaining.empty()) {
         double totalWeight = 0.0;
-        for (const Participant &participant : remaining) {
-            totalWeight += weightOf(participant);
+        for (std::size_t index = 0; index < remaining.size(); ++index) {
+            totalWeight += weightOf(index, remaining[index]);
         }
 
         std::size_t picked = remaining.size() - 1;
@@ -164,7 +189,7 @@ std::vector<Participant> DrawEngine::drawWeighted(const std::vector<Participant>
         } else {
             double cursor = unit(rng_) * totalWeight;
             for (std::size_t index = 0; index < remaining.size(); ++index) {
-                const double weight = weightOf(remaining[index]);
+                const double weight = weightOf(index, remaining[index]);
                 if (cursor < weight) {
                     picked = index;
                     break;
@@ -175,6 +200,9 @@ std::vector<Participant> DrawEngine::drawWeighted(const std::vector<Participant>
 
         winners.push_back(remaining[picked]);
         remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(picked));
+        if (weights != nullptr) {
+            remainingWeights.erase(remainingWeights.begin() + static_cast<std::ptrdiff_t>(picked));
+        }
     }
     return winners;
 }

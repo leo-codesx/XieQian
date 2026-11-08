@@ -578,17 +578,16 @@ QString BackendBridge::legacyJsonPath()
 QString BackendBridge::drawWinner()
 {
     const std::vector<xieqian::core::Participant> pool = roster_->enabledParticipants();
-    const std::vector<xieqian::core::Participant> winners = drawEngine_->draw(pool, 1, strategyFor());
+    const std::vector<xieqian::core::Participant> winners =
+        dynamicWeights_ ? drawEngine_->drawWithWeights(pool, 1, effectiveWeights(pool))
+                        : drawEngine_->draw(pool, 1, strategyFor());
     if (winners.empty()) {
         return QStringLiteral("无可用名单");
     }
 
-    recordWinners(winners);
     const QString name = QString::fromStdString(winners.front().name);
-    recordDraw(name);
+    recordDraw(winners);
     emit winnerDrawn(name);
-    // 让转盘在结果展示前就刷新扇区（动态权重衰减、防连抽的已中签标记）
-    emit rosterUpdated();
     return name;
 }
 
@@ -599,19 +598,18 @@ QVariantList BackendBridge::drawMultipleWinners()
 
     const std::vector<xieqian::core::Participant> pool = roster_->enabledParticipants();
     const std::vector<xieqian::core::Participant> picked =
-        drawEngine_->draw(pool, drawCount_, strategyFor());
-    recordWinners(picked);
+        dynamicWeights_ ? drawEngine_->drawWithWeights(pool, drawCount_, effectiveWeights(pool))
+                        : drawEngine_->draw(pool, drawCount_, strategyFor());
     for (const xieqian::core::Participant &participant : picked) {
         const QString name = QString::fromStdString(participant.name);
-        recordDraw(name);
         names.append(name);
         winners.append(name);
     }
 
+    recordDraw(picked);
     if (!names.isEmpty()) {
         emit winnersDrawn(names);
     }
-    emit rosterUpdated();
     return winners;
 }
 
@@ -661,10 +659,14 @@ double BackendBridge::effectiveWeight(const xieqian::core::Participant &particip
 {
     // 加权模式：扇区宽度 = 真实权重（动态模式下含衰减惩罚）
     if (drawStrategy_ == xieqian::core::DrawStrategy::Weighted) {
-        if (dynamicWeights_) {
-            return xieqian::core::dynamicWeight(participant);
+        const double base = std::max(0.0, participant.weight);
+        if (!dynamicWeights_) {
+            return base;
         }
-        return std::max(0.0, participant.weight);
+
+        const double decay = std::exp(-static_cast<double>(participant.drawCount) / 3.0);
+        const double streakFactor = std::max(0.1, 1.0 - static_cast<double>(participant.streak) * 0.2);
+        return base * decay * streakFactor;
     }
 
     // 防连抽：已中签者本轮概率为 0，扇区收成 0 宽度；
@@ -677,30 +679,37 @@ double BackendBridge::effectiveWeight(const xieqian::core::Participant &particip
     return 1.0;
 }
 
-void BackendBridge::recordWinners(const std::vector<xieqian::core::Participant> &winners)
+std::vector<double>
+BackendBridge::effectiveWeights(const std::vector<xieqian::core::Participant> &pool) const
 {
-    if (winners.empty() || !dynamicWeights_) {
+    std::vector<double> weights;
+    weights.reserve(pool.size());
+    for (const xieqian::core::Participant &participant : pool) {
+        weights.push_back(effectiveWeight(participant));
+    }
+    return weights;
+}
+
+void BackendBridge::recordDraw(const std::vector<xieqian::core::Participant> &winners)
+{
+    if (winners.empty()) {
         return;
     }
 
+    const QString time = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     std::vector<std::string> ids;
     ids.reserve(winners.size());
     for (const xieqian::core::Participant &winner : winners) {
+        const HistoryEntry entry{QString::fromStdString(winner.name), time};
+        history_.push_back(entry);
+        pendingHistory_.push_back(entry);
         ids.push_back(xieqian::core::participantId(winner));
     }
 
     roster_->recordWins(ids);
     saveState();
-}
-
-void BackendBridge::recordDraw(const QString &name)
-{
-    const QString time = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    const HistoryEntry entry{name, time};
-    history_.push_back(entry);
-    pendingHistory_.push_back(entry);
-    saveState();
     emit historyUpdated();
+    emit rosterUpdated();
 }
 
 void BackendBridge::appendHistory(const QString &name)
@@ -710,7 +719,12 @@ void BackendBridge::appendHistory(const QString &name)
         return;
     }
 
-    recordDraw(trimmed);
+    const QString time = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    const HistoryEntry entry{trimmed, time};
+    history_.push_back(entry);
+    pendingHistory_.push_back(entry);
+    saveState();
+    emit historyUpdated();
 }
 
 QVariantList BackendBridge::getHistory()
