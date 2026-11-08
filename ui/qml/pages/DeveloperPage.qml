@@ -35,6 +35,11 @@ Item {
         if (ocrBusy)
             return
 
+        if (!backendBridge.hasAIConfig()) {
+            aiKeyDialog.open()
+            return
+        }
+
         var path = backendBridge.chooseRosterImagePath()
         if (!path || path.length === 0)
             return
@@ -103,6 +108,14 @@ Item {
             page.ocrBusy = false
             page.statusFailed = true
             page.statusMessage = String(message)
+        }
+
+        function onTextAiKeyMissing() {
+            if (!page.ocrBusy)
+                return
+            page.ocrBusy = false
+            page.statusMessage = ""
+            aiKeyDialog.open()
         }
     }
 
@@ -280,12 +293,12 @@ Item {
             delegate: Rectangle {
                 id: card
 
-                CardShadow {}
-
                 width: ListView.view ? ListView.view.width : 0
                 height: 70
                 radius: Theme.radiusListCard
                 color: Theme.surface
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
                 opacity: modelData.enabled ? 1.0 : 0.6
 
                 RowLayout {
@@ -428,6 +441,11 @@ Item {
                 }
             }
         }
+    }
+
+    // 未配置 API Key 时的统一引导
+    AiKeyDialog {
+        id: aiKeyDialog
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -186,12 +186,13 @@ Item {
             delegate: Rectangle {
                 id: card
 
-                CardShadow {}
-
                 width: ListView.view ? ListView.view.width : 0
                 height: 68
                 radius: Theme.radiusListCard
                 color: Theme.surface
+                // 去掉列表项的 MultiEffect 阴影：改为 1px 描边，滚动更轻
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
 
                 MouseArea {
                     id: cardMouse
@@ -255,9 +256,7 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: modelData.studentId && modelData.studentId.length > 0
-                                  ? modelData.studentId
-                                  : "抽取记录"
+                            text: "中签记录"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontBody

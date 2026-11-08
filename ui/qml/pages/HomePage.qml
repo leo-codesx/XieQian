@@ -22,6 +22,8 @@ Item {
     property string wheelKey: ""
     property var rosterOptions: []
     property var rosterWeights: []
+    // 与 rosterOptions 一一对应的“已中签”标记，用于置灰扇区
+    property var rosterDrawn: []
     property int pendingIndex: -1
     property string deleteTargetName: ""
 
@@ -55,8 +57,18 @@ Item {
     readonly property var wheelOptions: customWheel
                                         ? wheelChoices[selectedWheel].options
                                         : rosterOptions
-    // 默认转盘按名单权重分配扇区；自定义转盘的选项没有权重，均分
+    // 默认转盘按后端给出的“有效权重”分配扇区；自定义转盘的选项没有权重，均分
     readonly property var wheelWeights: customWheel ? [] : rosterWeights
+    // 只有“防连抽”策略才把已中签者置灰，其它策略下不显示这一状态
+    readonly property var wheelDimmed: (customWheel || backendBridge.drawStrategy !== 1)
+                                       ? [] : rosterDrawn
+
+    readonly property string strategyName: {
+        var names = ["等概率", "防连抽", "加权"]
+        var index = Math.max(0, Math.min(2, backendBridge.drawStrategy))
+        return names[index]
+    }
+    readonly property string rulesSummary: backendBridge.drawCount + " 人 · " + strategyName
 
     property bool busy: false
     // 抽奖期间名单刷新要延后：动态权重会在开奖瞬间改写扇区宽度，
@@ -86,16 +98,21 @@ Item {
     function refreshRosterOptions() {
         var list = []
         var weights = []
+        var drawn = []
         var participants = backendBridge.getParticipantsWithStatus()
         for (var i = 0; i < participants.length; ++i) {
             if (participants[i].enabled) {
                 list.push(String(participants[i].name))
-                var weight = Number(participants[i].weight)
-                weights.push(isFinite(weight) && weight > 0 ? weight : 1)
+                // effectiveWeight 由后端按策略计算：等概率恒为 1，防连抽给已中签者 0，
+                // 加权策略下计入动态衰减，保证扇区宽度就是真实中奖概率
+                var weight = Number(participants[i].effectiveWeight)
+                weights.push(isFinite(weight) && weight >= 0 ? weight : 0)
+                drawn.push(participants[i].isDrawn === true)
             }
         }
         rosterOptions = list
         rosterWeights = weights
+        rosterDrawn = drawn
     }
 
     function selectWheel(index) {
@@ -150,6 +167,9 @@ Item {
         lastWinners = []
         pendingWinners = []
         pendingIndex = -1
+
+        if (animationEnabled && Window.window && typeof Window.window.playSpin === "function")
+            Window.window.playSpin()
 
         if (customWheel) {
             if (wheelOptions.length === 0) {
@@ -592,13 +612,61 @@ Item {
                         height: width
                         options: page.wheelOptions
                         weights: page.wheelWeights
+                        dimmed: page.wheelDimmed
                         showPointer: true
                         motionEnabled: page.animationEnabled
                         onFinished: page.finishDraw()
                     }
                 }
             }
+
+            // 右上角抽奖规则入口：人数与策略对用户始终可见、可改
+            Rectangle {
+                id: rulesChip
+
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 14
+                anchors.rightMargin: 14
+                width: rulesLabel.implicitWidth + 24
+                height: 30
+                radius: 15
+                color: rulesMouse.containsMouse ? Theme.primarySoft : Theme.surfaceAlt
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.primary, 0.25)
+                z: 5
+
+                Text {
+                    id: rulesLabel
+                    anchors.centerIn: parent
+                    text: "抽奖规则 · " + page.rulesSummary
+                    color: Theme.primary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontMicro
+                    font.weight: Font.DemiBold
+                }
+
+                MouseArea {
+                    id: rulesMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (page.busy)
+                            return
+                        if (Window.window && typeof Window.window.playClick === "function")
+                            Window.window.playClick()
+                        drawSettings.open()
+                    }
+                }
+            }
         }
+    }
+
+    // 抽奖规则：抽取人数（1-10）与策略选择
+    DrawSettingsDialog {
+        id: drawSettings
+        anchors.fill: parent
     }
 
     // 右键 / 长按自定义标签触发的删除确认
@@ -692,6 +760,7 @@ Item {
         sequence: "Space"
         context: Qt.WindowShortcut
         enabled: page.visible && !page.isDrawing && !page.isEmpty
+                 && !drawSettings.opened
                  && !(Window.window && Window.window.resultOpen)
         onActivated: page.startDraw()
     }
@@ -709,7 +778,7 @@ Item {
     Connections {
         target: backendBridge
 
-        function onWinnerDrawn(name, mode) {
+        function onWinnerDrawn(name) {
             page.handleWinners([name])
         }
 
@@ -722,6 +791,15 @@ Item {
                 page.rosterRefreshPending = true
                 return
             }
+            page.refreshRosterOptions()
+        }
+
+        // 策略或动态权重变化会改变“有效权重”，必须立即重绘扇区
+        function onDrawSettingsChanged() {
+            page.refreshRosterOptions()
+        }
+
+        function onDynamicWeightsChanged() {
             page.refreshRosterOptions()
         }
 

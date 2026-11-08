@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -84,7 +86,14 @@ double parseWeight(const std::string &value)
     return parsed;
 }
 
-bool hasCsvExtension(const std::string &filePath)
+bool isHeaderLine(const std::string &line)
+{
+    return line.find("姓名") != std::string::npos;
+}
+
+}  // namespace
+
+bool FileParser::usesCsvFormat(const std::string &filePath)
 {
     std::string extension = std::filesystem::path(filePath).extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
@@ -93,31 +102,36 @@ bool hasCsvExtension(const std::string &filePath)
     return extension == ".csv";
 }
 
-bool isHeaderLine(const std::string &line)
-{
-    return line.find("姓名") != std::string::npos;
-}
-
-}  // namespace
-
 bool FileParser::parseFile(const std::string &filePath, Roster &roster)
 {
     lastError_.clear();
 
-    std::ifstream file(filePath);
+    std::ifstream file(filePath, std::ios::binary);
     if (!file.is_open()) {
         lastError_ = "无法打开文件: " + filePath;
         return false;
     }
 
-    const bool csvMode = hasCsvExtension(filePath);
+    const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (file.bad()) {
+        lastError_ = "读取文件失败: " + filePath;
+        return false;
+    }
 
+    return parseText(content, usesCsvFormat(filePath), roster);
+}
+
+bool FileParser::parseText(const std::string &text, bool csvMode, Roster &roster)
+{
+    lastError_.clear();
+
+    std::istringstream stream(text);
     std::vector<Participant> parsed;
     std::string line;
     std::size_t lineNumber = 0;
     bool headerChecked = false;
 
-    while (std::getline(file, line)) {
+    while (std::getline(stream, line)) {
         ++lineNumber;
         if (lineNumber == 1) {
             stripUtf8Bom(line);

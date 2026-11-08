@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
+import QtQuick.Window
 
 import ".."
 
@@ -17,6 +18,10 @@ Item {
     property var winnerNames: []
     property bool opened: false
     property string quote: ""
+    // AI 颁奖词状态：仅在用户点击按钮后请求，绝不后台静默调用
+    property string speech: ""
+    property bool speechBusy: false
+    property string speechError: ""
 
     readonly property var quotes: [
         "命运的齿轮开始转动",
@@ -152,11 +157,32 @@ Item {
 
         winnerNames = list
         quote = quotes[Math.floor(Math.random() * quotes.length)]
+        speech = ""
+        speechBusy = false
+        speechError = ""
         opened = true
+
+        if (Window.window && typeof Window.window.playWin === "function")
+            Window.window.playWin()
 
         // 彩带只在弹出瞬间撒一次，2 秒后整层卸载
         confettiLoader.active = true
         confettiTimer.restart()
+    }
+
+    function requestSpeech() {
+        if (speechBusy || firstWinner.length === 0)
+            return
+
+        if (!backendBridge.hasAIConfig()) {
+            aiKeyDialog.open()
+            return
+        }
+
+        speechBusy = true
+        speechError = ""
+        speech = ""
+        backendBridge.aiManager.generateAwardSpeech(firstWinner)
     }
 
     function close() {
@@ -416,6 +442,64 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
             }
+
+            // AI 颁奖词：点击才请求，无 Key 时弹窗引导去设置
+            Column {
+                width: parent.width
+                spacing: 8
+                visible: !resultCard.multi
+
+                Rectangle {
+                    width: 158
+                    height: 36
+                    radius: 18
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: speechMouse.containsMouse ? Theme.primarySoft : Theme.surfaceAlt
+                    border.width: 1
+                    border.color: Theme.withAlpha(Theme.primary, 0.25)
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: resultCard.speechBusy ? "AI 正在撰写…" : "AI 撰写颁奖词"
+                        color: Theme.primary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontCaption
+                        font.weight: Font.DemiBold
+                    }
+
+                    MouseArea {
+                        id: speechMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: resultCard.requestSpeech()
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    visible: resultCard.speech.length > 0
+                    text: resultCard.speech
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    width: parent.width
+                    visible: resultCard.speechError.length > 0
+                    text: resultCard.speechError
+                    horizontalAlignment: Text.AlignHCenter
+                    color: Theme.danger
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontMicro
+                    wrapMode: Text.WordWrap
+                }
+            }
         }
 
         // 底部动作
@@ -606,6 +690,44 @@ Item {
                 if (button.enabled)
                     button.clicked()
             }
+        }
+    }
+
+    Connections {
+        target: backendBridge.aiManager
+
+        function onAwardSpeechReady(text) {
+            if (!resultCard.opened)
+                return
+            resultCard.speechBusy = false
+            resultCard.speech = String(text)
+        }
+
+        function onAwardSpeechFailed(message) {
+            if (!resultCard.opened)
+                return
+            resultCard.speechBusy = false
+            resultCard.speechError = String(message)
+        }
+
+        function onTextAiKeyMissing() {
+            if (!resultCard.opened || !resultCard.speechBusy)
+                return
+            resultCard.speechBusy = false
+            aiKeyDialog.open()
+        }
+    }
+
+    AiKeyDialog {
+        id: aiKeyDialog
+        z: 20
+        navigateToSettings: false
+
+        onConfigureRequested: {
+            // 先关闭贺卡解除抽奖锁，再跳转到设置页，否则遮罩会挡住设置界面
+            resultCard.close()
+            if (Window.window && typeof Window.window.navigate === "function")
+                Window.window.navigate(6)
         }
     }
 }

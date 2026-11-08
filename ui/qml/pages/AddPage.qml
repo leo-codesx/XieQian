@@ -28,8 +28,8 @@ Item {
     property string ocrStatus: ""
     property string importMessage: ""
     property bool importFailed: false
-    // 本次导入得到的名字：只追加到选项，是否进名单池由保存后的弹窗决定
-    property var importedNames: []
+    // 本次导入得到的完整条目（姓名/学号/班级），保存后可一并写入名单池
+    property var importedEntries: []
 
     readonly property int maxOptions: 200
     readonly property int minOptions: 2
@@ -82,7 +82,7 @@ Item {
         page.createdName = ""
         page.createdOptions = []
         page.errorMessage = ""
-        page.importedNames = []
+        page.importedEntries = []
         page.importMessage = ""
         page.importFailed = false
         nameField.text = ""
@@ -128,9 +128,6 @@ Item {
 
             known.push(name)
             added += 1
-
-            if (page.importedNames.indexOf(name) < 0)
-                page.importedNames = page.importedNames.concat([name])
         }
 
         return added
@@ -171,7 +168,7 @@ Item {
         page.wheelCreated(name, options)
         successReveal.restart()
 
-        if (page.importedNames.length > 0)
+        if (page.importedEntries.length > 0)
             rosterDialog.open()
     }
 
@@ -188,19 +185,46 @@ Item {
         if (!path || path.length === 0)
             return
 
-        var names = backendBridge.readNamesFromFile(path)
-        importFailed = names.length === 0
-        if (names.length === 0) {
-            importMessage = "没有从文件里读到名字，请检查文件内容"
+        var entries = backendBridge.readRosterFromFile(path)
+        if (entries.length === 0) {
+            importFailed = true
+            var detail = backendBridge.lastError()
+            importMessage = detail.length > 0 ? detail : "没有从文件里读到名字，请检查文件内容"
             return
         }
 
-        importMessage = "已导入 " + appendNamesToOptions(names) + " 个名字到选项"
+        var names = []
+        var merged = importedEntries.slice()
+        for (var i = 0; i < entries.length; ++i) {
+            names.push(String(entries[i].name))
+
+            var duplicate = false
+            for (var j = 0; j < merged.length; ++j) {
+                if (String(merged[j].name) === String(entries[i].name)
+                        && String(merged[j].studentId) === String(entries[i].studentId)) {
+                    duplicate = true
+                    break
+                }
+            }
+            if (!duplicate)
+                merged.push(entries[i])
+        }
+
+        var added = appendNamesToOptions(names)
+        importedEntries = merged
+        importFailed = false
+        importMessage = "已导入 " + added + " 个名字到选项"
     }
 
     function startImageImport() {
         if (ocrBusy)
             return
+
+        // 零信任：未配置 Key 时直接引导设置，连文件选择框都不弹，避免误解为已开始识别
+        if (!backendBridge.hasAIConfig()) {
+            aiKeyDialog.open()
+            return
+        }
 
         var path = backendBridge.chooseRosterImagePath()
         if (!path || path.length === 0)
@@ -248,6 +272,19 @@ Item {
             page.importFailed = true
             page.importMessage = String(message)
         }
+
+        function onTextAiKeyMissing() {
+            if (!page.ocrBusy)
+                return
+            page.ocrBusy = false
+            page.ocrStatus = ""
+            aiKeyDialog.open()
+        }
+    }
+
+    // 零信任：图片识别同样使用用户自己的 Key，未配置时只弹窗、不发请求
+    AiKeyDialog {
+        id: aiKeyDialog
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -988,7 +1025,7 @@ Item {
 
             Text {
                 width: parent.width
-                text: "还有 " + page.importedNames.length + " 个导入的名字，要一起加入名单吗？"
+                text: "还有 " + page.importedEntries.length + " 个导入的名字，要一起加入名单吗？"
                 color: Theme.textSecondary
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontBody
@@ -1081,11 +1118,11 @@ Item {
 
         onAccepted: {
             if (addToRoster)
-                backendBridge.appendNamesToRoster(page.importedNames)
-            page.importedNames = []
+                backendBridge.appendEntriesToRoster(page.importedEntries)
+            page.importedEntries = []
         }
 
-        onRejected: page.importedNames = []
+        onRejected: page.importedEntries = []
     }
 
     // ─────────────────────────────────────────────────────────────

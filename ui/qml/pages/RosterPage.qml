@@ -19,6 +19,8 @@ Item {
     property var participants: []
     property string removeTargetId: ""
     property string removeTargetName: ""
+    property string statusMessage: ""
+    property bool statusFailed: false
 
     readonly property int totalCount: backendBridge.rosterCount
 
@@ -47,6 +49,37 @@ Item {
         removeTargetId = item.id
         removeTargetName = item.name
         removeDialog.open()
+    }
+
+    // 直接导入到名单池：支持姓名、学号、班级多列，编码由后端自动识别
+    function importRoster() {
+        var path = backendBridge.chooseRosterFilePath()
+        if (!path || path.length === 0)
+            return
+
+        var entries = backendBridge.readRosterFromFile(path)
+        if (entries.length === 0) {
+            statusFailed = true
+            var detail = backendBridge.lastError()
+            statusMessage = detail.length > 0 ? detail : "没有从文件里读到名单"
+            statusTimer.restart()
+            return
+        }
+
+        var added = backendBridge.appendEntriesToRoster(entries)
+        statusFailed = added === 0
+        statusMessage = added > 0 ? "已导入 " + added + " 人（含学号与班级）"
+                                  : "名单里已经有这些人了"
+        statusTimer.restart()
+    }
+
+    function subtitleFor(item) {
+        var parts = []
+        if (item.studentId && item.studentId.length > 0)
+            parts.push("学号 " + item.studentId)
+        if (item.group && item.group.length > 0)
+            parts.push("班级 " + item.group)
+        return parts.length > 0 ? parts.join(" · ") : "未填写学号与班级"
     }
 
     Component.onCompleted: refresh()
@@ -106,34 +139,48 @@ Item {
                 }
             }
 
-            Rectangle {
+            Row {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                height: 30
-                width: countRow.implicitWidth + 22
-                radius: 15
-                color: Theme.surface
+                spacing: 10
 
-                RowLayout {
-                    id: countRow
-                    anchors.centerIn: parent
-                    spacing: 7
+                RosterButton {
+                    width: 104
+                    height: 32
+                    text: "导入名单"
+                    primary: true
+                    onClicked: page.importRoster()
+                }
 
-                    Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredWidth: 7
-                        Layout.preferredHeight: 7
-                        radius: 3.5
-                        color: page.totalCount > 0 ? Theme.success : Theme.textTertiary
-                    }
+                Rectangle {
+                    height: 32
+                    width: countRow.implicitWidth + 22
+                    radius: 16
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
 
-                    Text {
-                        Layout.alignment: Qt.AlignVCenter
-                        text: page.totalCount + " 人"
-                        color: Theme.textPrimary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
+                    RowLayout {
+                        id: countRow
+                        anchors.centerIn: parent
+                        spacing: 7
+
+                        Rectangle {
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: 7
+                            Layout.preferredHeight: 7
+                            radius: 3.5
+                            color: page.totalCount > 0 ? Theme.success : Theme.textTertiary
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignVCenter
+                            text: page.totalCount + " 人"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontCaption
+                            font.weight: Font.DemiBold
+                        }
                     }
                 }
             }
@@ -162,12 +209,13 @@ Item {
             delegate: Rectangle {
                 id: card
 
-                CardShadow {}
-
                 width: ListView.view ? ListView.view.width : 0
                 height: 72
                 radius: Theme.radiusListCard
                 color: Theme.surface
+                // 列表项不再叠 MultiEffect 阴影：每项一层 FBO 在中低端机器上非常昂贵
+                border.width: 1
+                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
                 opacity: modelData.enabled ? 1.0 : 0.55
                 scale: cardMouse.containsMouse ? 1.002 : 1.0
 
@@ -231,7 +279,7 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: modelData.studentId + (modelData.group.length > 0 ? " · " + modelData.group : "")
+                            text: page.subtitleFor(modelData)
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontBody
@@ -449,6 +497,39 @@ Item {
         }
 
         onAccepted: backendBridge.removeParticipant(page.removeTargetId)
+    }
+
+    // 导入结果提示（成功/失败都由真实返回值决定）
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 26
+        width: Math.min(parent.width - 48, statusLabel.implicitWidth + 36)
+        height: 38
+        radius: 19
+        color: page.statusFailed ? Theme.danger : Theme.withAlpha(Theme.textPrimary, 0.90)
+        visible: page.statusMessage.length > 0
+        z: 60
+
+        Text {
+            id: statusLabel
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, page.width - 72)
+            text: page.statusMessage
+            color: Theme.white
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontCaption
+            font.weight: Font.DemiBold
+        }
+    }
+
+    Timer {
+        id: statusTimer
+        interval: 2800
+        repeat: false
+        onTriggered: page.statusMessage = ""
     }
 
     // ─────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ Item {
 
     property string pendingRestorePath: ""
     property string developerError: ""
+    property bool aiConfigured: backendBridge.hasAIConfig()
     readonly property string developerPassword: "LuvXcm080511"
 
     function reloadAIConfig() {
@@ -66,6 +67,7 @@ Item {
         target: backendBridge
 
         function onAiConfigChanged() {
+            page.aiConfigured = backendBridge.hasAIConfig()
             page.reloadAIConfig()
         }
     }
@@ -271,8 +273,9 @@ Item {
 
                                 Text {
                                     width: parent.width
-                                    text: "高级计算、函数解析与颁奖词会用到这里的 Key"
-                                    color: Theme.textSecondary
+                                    text: (page.aiConfigured ? "已配置 Key。" : "尚未配置 Key。")
+                                          + "图片识别、成绩调权、颁奖词与函数生成都会使用这里的 Key"
+                                    color: page.aiConfigured ? Theme.success : Theme.textSecondary
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontCaption
                                     wrapMode: Text.WordWrap
@@ -285,7 +288,7 @@ Item {
                         FieldRow {
                             id: apiKeyRow
                             label: "API Key"
-                            placeholder: "sk-..."
+                            placeholder: "填写你的 API Key"
                             password: true
                             maximumLength: 256
                         }
@@ -342,14 +345,17 @@ Item {
 
                         ActionRow {
                             title: "备份数据"
-                            subtitle: "把名单、历史与设置导出为 JSON"
+                            subtitle: "导出名单、历史与设置（不含 API Key）"
                             actionLabel: "备份"
                             onTriggered: {
                                 var path = backendBridge.chooseBackupPath()
-                                if (path && path.length > 0) {
-                                    backendBridge.exportData(path)
-                                    page.showToast("备份已导出")
-                                }
+                                if (!path || path.length === 0)
+                                    return
+
+                                if (backendBridge.exportData(path))
+                                    page.showToast("备份已导出（不含 API Key）")
+                                else
+                                    page.showToast("备份失败：" + backendBridge.lastError())
                             }
                         }
 
@@ -570,7 +576,7 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 28
-        width: toastText.implicitWidth + 40
+        width: Math.min(page.width - 48, toastText.implicitWidth + 40)
         height: 40
         radius: 20
         color: Theme.withAlpha(Theme.textPrimary, 0.9)
@@ -581,8 +587,11 @@ Item {
         Text {
             id: toastText
             anchors.centerIn: parent
+            width: Math.min(implicitWidth, page.width - 96)
             text: toast.message
             color: Theme.white
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: Theme.fontCaption
             font.weight: Font.DemiBold
@@ -710,9 +719,10 @@ Item {
                     label: "恢复"
                     strong: true
                     onClicked: {
-                        backendBridge.importData(page.pendingRestorePath)
+                        var restored = backendBridge.importData(page.pendingRestorePath)
                         restoreDialog.close()
-                        page.showToast("已恢复备份")
+                        page.showToast(restored ? "已恢复备份"
+                                                : "恢复失败：" + backendBridge.lastError())
                     }
                 }
             }
@@ -765,7 +775,7 @@ Item {
                     Text {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
-                        text: "抹除全部记录？"
+                        text: "抹除名单与历史？"
                         color: Theme.textPrimary
                         font.family: Theme.fontFamily
                         font.pixelSize: 17
@@ -775,7 +785,7 @@ Item {
                     Text {
                         width: parent.width
                         horizontalAlignment: Text.AlignHCenter
-                        text: "名单与抽取历史会被永久删除，无法找回。"
+                        text: "只清除名单与抽取历史；AI 配置、自定义转盘与偏好设置会保留。"
                         color: Theme.textSecondary
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontCaption

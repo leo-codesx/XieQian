@@ -10,6 +10,7 @@
 
 class QJsonObject;
 class QNetworkAccessManager;
+class QUrl;
 
 class AiManager : public QObject
 {
@@ -19,10 +20,10 @@ public:
     explicit AiManager(QObject *parent = nullptr);
     ~AiManager() override;
 
-    Q_INVOKABLE void generateMockRoster();
+    // 颁奖词：使用用户在设置页配置的文本 API Key
     Q_INVOKABLE void generateAwardSpeech(const QString &winnerName);
 
-    // 图片 OCR：内置专用密钥，多轮提取 + 投票校验
+    // 图片 OCR：与文本任务共用同一份用户配置（零信任，内置无任何密钥）
     Q_INVOKABLE void ocrFromImage(const QString &filePath);
 
     // 成绩单 OCR：返回 [{name, score}]，用于开发者页的 AI 调权
@@ -31,15 +32,14 @@ public:
     // 自然语言转函数表达式，结果可直接填进函数图像页
     Q_INVOKABLE void generateFunction(const QString &prompt);
 
-    // 用户配置优先；文本任务只使用用户自己的密钥，不会再回退到内置配置。
+    // 用户配置优先；为空表示未配置，所有 AI 入口都应引导到设置页
     void setApiConfig(const QString &apiKey, const QString &baseUrl, const QString &model);
 
+    [[nodiscard]] bool hasApiKey() const;
+
 signals:
-    void mockRosterReady(const QVariantList &roster);
-    void mockRosterFailed(const QString &message);
     void awardSpeechReady(const QString &speech);
     void awardSpeechFailed(const QString &message);
-    void networkError(const QString &message);
     // 文本 AI 未配置用户密钥时发出，由界面弹窗引导去设置页
     void textAiKeyMissing();
     void ocrRosterReady(const QStringList &names);
@@ -50,7 +50,7 @@ signals:
     void functionFailed(const QString &message);
 
 private:
-    enum class RequestKind { MockRoster, AwardSpeech, FunctionExpression };
+    enum class RequestKind { AwardSpeech, FunctionExpression };
 
     using ChatHandler = std::function<void(bool ok, const QString &content, const QString &error)>;
 
@@ -58,11 +58,13 @@ private:
     void emitFailure(RequestKind kind, const QString &message);
     [[nodiscard]] QString effectiveModel() const;
     [[nodiscard]] QString endpointUrl() const;
-    [[nodiscard]] static QVariantList parseRoster(const QString &content);
-    [[nodiscard]] static QStringList parseNameLines(const QString &content);
+    [[nodiscard]] bool ensureApiKey();
+    [[nodiscard]] static bool isSecureEndpoint(const QUrl &url);
+    [[nodiscard]] static QString missingKeyMessage();
     [[nodiscard]] static QVariantList parseScores(const QString &content);
     [[nodiscard]] static QString cleanExpression(const QString &content);
     [[nodiscard]] static QString cleanSpeech(const QString &content);
+    [[nodiscard]] static QStringList parseNameLines(const QString &content);
 
     void postChat(const QJsonObject &payload, const QString &key, const QString &endpoint,
                   int timeoutMs, ChatHandler handler);

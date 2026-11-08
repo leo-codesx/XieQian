@@ -120,7 +120,7 @@ Item {
         }
 
         calcError = ""
-        calcResult = Parser.formatNumber(outcome.value)
+        calcResult = Parser.formatResult(outcome)
     }
 
     function pressCalcKey(action) {
@@ -481,6 +481,11 @@ Item {
         if (aiBusy)
             return
 
+        if (!backendBridge.hasAIConfig()) {
+            keyDialog.open()
+            return
+        }
+
         var prompt = String(aiPrompt).trim()
         if (prompt.length === 0) {
             plotError = "先描述一下想画的图形，例如「画个爱心」"
@@ -517,6 +522,9 @@ Item {
         }
 
         function onTextAiKeyMissing() {
+            // 只处理本页发起的请求，避免其它页面的 AI 操作顺带弹窗
+            if (!page.aiBusy)
+                return
             page.aiBusy = false
             page.aiStatus = ""
             keyDialog.open()
@@ -605,7 +613,7 @@ Item {
                     anchors.fill: parent
                     clip: true
                     contentWidth: width
-                    contentHeight: calcColumn.height + 16
+                    contentHeight: calcSheet.height + 32
                     boundsBehavior: Flickable.StopAtBounds
 
                     ScrollBar.vertical: ScrollBar {
@@ -613,13 +621,30 @@ Item {
                         policy: ScrollBar.AlwaysOff
                     }
 
-                    Column {
-                        id: calcColumn
+                    // 计算器整体放在一张独立白色圆角卡片上，与浅灰页面背景分层
+                    Item {
+                        id: calcSheet
 
-                        width: Math.min(400, calcFlick.width)
-                        x: Math.max(0, (calcFlick.width - width) / 2)
-                        y: 4
-                        spacing: 12
+                        width: Math.min(460, calcFlick.width - 16)
+                        height: calcColumn.height + 40
+                        x: (calcFlick.width - width) / 2
+                        y: 16
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 24
+                            color: Theme.surface
+
+                            CardShadow {}
+                        }
+
+                        Column {
+                            id: calcColumn
+
+                            x: 20
+                            y: 20
+                            width: parent.width - 40
+                            spacing: 12
 
                         // 显示屏
                         Rectangle {
@@ -708,6 +733,7 @@ Item {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1075,17 +1101,21 @@ Item {
                             ctx.lineCap = "round"
 
                             if (paths.length > 1) {
-                                // 等值线由大量短线段组成，全部累积在同一个 path 里一次 stroke
+                                // 多段曲线：隐式方程的等值线是两点短段，而显式函数在
+                                // 断点（tan / 1÷x）之后也会被切成多段。这里必须遍历
+                                // 每段的全部点，否则显式曲线只剩每段的前两个点。
                                 ctx.beginPath()
                                 for (var p = 0; p < paths.length && p < limit; ++p) {
                                     var segment = paths[p]
-                                    if (segment.length < 2)
+                                    if (!segment || segment.length < 2)
                                         continue
                                     ctx.moveTo(mapX(segment[0][0]), mapY(segment[0][1]))
-                                    ctx.lineTo(mapX(segment[1][0]), mapY(segment[1][1]))
-                                    tipX = mapX(segment[1][0])
-                                    tipY = mapY(segment[1][1])
-                                    hasTip = true
+                                    for (var s = 1; s < segment.length; ++s) {
+                                        ctx.lineTo(mapX(segment[s][0]), mapY(segment[s][1]))
+                                        tipX = mapX(segment[s][0])
+                                        tipY = mapY(segment[s][1])
+                                        hasTip = true
+                                    }
                                 }
                                 ctx.stroke()
                             } else if (paths.length === 1) {
@@ -1149,73 +1179,10 @@ Item {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 文本 AI 未配置密钥：引导去设置页
+    // 文本 AI 未配置密钥：统一引导弹窗（零信任，不发任何请求）
     // ─────────────────────────────────────────────────────────────
-    Dialog {
+    AiKeyDialog {
         id: keyDialog
-
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        modal: true
-        width: 400
-        padding: 26
-
-        background: Rectangle {
-            radius: Theme.radiusDialog
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.withAlpha(Theme.textPrimary, 0.06)
-        }
-
-        contentItem: Column {
-            width: 348
-            spacing: 14
-
-            Text {
-                width: parent.width
-                text: "请前往设置配置 API Key"
-                color: Theme.textPrimary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontH2
-                font.weight: Font.DemiBold
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            Text {
-                width: parent.width
-                text: "AI 生成函数使用你在设置页填写的文本 API Key，当前还没有配置。图片识别不占用这个 Key。"
-                color: Theme.textSecondary
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontBody
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                lineHeight: 1.35
-            }
-
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 10
-
-                ToolAction {
-                    width: 104
-                    height: 40
-                    text: "稍后"
-                    onClicked: keyDialog.close()
-                }
-
-                ToolAction {
-                    width: 124
-                    height: 40
-                    primary: true
-                    text: "前往设置"
-                    onClicked: {
-                        keyDialog.close()
-                        if (Window.window && typeof Window.window.navigate === "function")
-                            Window.window.navigate(6)
-                    }
-                }
-            }
-        }
     }
 
     // ─────────────────────────────────────────────────────────────

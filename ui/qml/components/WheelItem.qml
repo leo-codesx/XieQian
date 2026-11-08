@@ -19,8 +19,10 @@ Item {
 
     // 转盘选项；为空时使用内置的“签运”文案，保证独立预览也有内容
     property var options: []
-    // 与 options 一一对应的权重；缺省或非法值按 1 处理
+    // 与 options 一一对应的权重；缺省或非法值按 1 处理，0 表示该扇区概率为 0
     property var weights: []
+    // 与 options 一一对应的“已中签”标记：防连抽模式下置灰显示
+    property var dimmed: []
     property real angle: 0
     property bool spinActive: false
     property bool showPointer: true
@@ -47,7 +49,7 @@ Item {
         return Math.max(1, options.length)
     }
 
-    // 归一化权重：非法、缺失、非正值都按 1 处理，全为 0 时退回等分
+    // 归一化权重：非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分
     function weightList() {
         var count = effectiveCount()
         var list = []
@@ -57,7 +59,7 @@ Item {
             var weight = 1
             if (wheelRoot.weights && i < wheelRoot.weights.length) {
                 var value = Number(wheelRoot.weights[i])
-                if (isFinite(value) && value > 0)
+                if (isFinite(value) && value >= 0)
                     weight = value
             }
             list.push(weight)
@@ -125,6 +127,11 @@ Item {
     }
 
     onWeightsChanged: {
+        if (sectorCanvas)
+            sectorCanvas.requestPaint()
+    }
+
+    onDimmedChanged: {
         if (sectorCanvas)
             sectorCanvas.requestPaint()
     }
@@ -200,26 +207,28 @@ Item {
                     cursor += sweep
                 }
 
-                // 高饱和、冷暖交替的现代色盘
+                // 高饱和撞色盘：相邻扇区保证明度/色相差异，暗色背景下也能分辨
                 var palette = [
-                    "#1E88FF",
-                    "#00C853",
-                    "#FFD600",
-                    "#FF6D00",
-                    "#00B0FF",
-                    "#00E676",
-                    "#FFAB00",
-                    "#FF3D00",
-                    "#2979FF",
-                    "#00BFA5"
+                    "#1E6BFF", // 亮蓝
+                    "#FF2D95", // 品红
+                    "#FFD400", // 明黄
+                    "#00C2FF", // 青
+                    "#FF5A1F", // 橙
+                    "#9B4DFF", // 紫
+                    "#00E58A", // 荧光绿
+                    "#FF3B30", // 红
+                    "#FF8A00", // 琥珀
+                    "#3D5AFE"  // 靛蓝
                 ]
 
-                // 1. 实心扇形
-                var separator = 2
+                // 1. 实心扇形 + 已中签置灰 + 加粗白色分割线
+                var separator = Math.max(3, radius * 0.012)
 
                 for (var i = 0; i < count; ++i) {
                     var a0 = sectorStarts[i]
                     var a1 = a0 + sectorAngles[i]
+                    if (a1 <= a0)
+                        continue
 
                     ctx.beginPath()
                     ctx.moveTo(cx, cy)
@@ -228,8 +237,17 @@ Item {
                     ctx.fillStyle = palette[i % palette.length]
                     ctx.fill()
 
-                    ctx.strokeStyle = "rgba(255,255,255,0.94)"
+                    // 防连抽：已经中签的扇区压暗，提示它本轮概率为 0
+                    var isDimmed = wheelRoot.dimmed && i < wheelRoot.dimmed.length
+                                   && wheelRoot.dimmed[i] === true
+                    if (isDimmed) {
+                        ctx.fillStyle = "rgba(12,18,28,0.58)"
+                        ctx.fill()
+                    }
+
+                    ctx.strokeStyle = "rgba(255,255,255,0.96)"
                     ctx.lineWidth = separator
+                    ctx.lineJoin = "round"
                     ctx.stroke()
                 }
 
@@ -303,11 +321,6 @@ Item {
 
                     ctx.textAlign = "center"
                     ctx.textBaseline = "middle"
-                    ctx.fillStyle = "#FFFFFF"
-                    ctx.shadowColor = "rgba(15,23,42,0.58)"
-                    ctx.shadowBlur = 3
-                    ctx.shadowOffsetX = 0
-                    ctx.shadowOffsetY = flipped ? -1.4 : 1.4
 
                     var text = String(labels[j])
                     if (ctx.measureText(text).width > textWidth) {
@@ -318,6 +331,14 @@ Item {
                         text = clipped + "…"
                     }
 
+                    // 深色阴影向右下偏移一层，再叠纯白主体：
+                    // 比依赖 shadowBlur 更稳定，浅色/高饱和扇区上都能看清
+                    ctx.fillStyle = "rgba(0,0,0,0.55)"
+                    ctx.fillText(text, 1, flipped ? -1.6 : 1.6)
+
+                    var textDimmed = wheelRoot.dimmed && j < wheelRoot.dimmed.length
+                                     && wheelRoot.dimmed[j] === true
+                    ctx.fillStyle = textDimmed ? "rgba(255,255,255,0.55)" : "#FFFFFF"
                     ctx.fillText(text, 0, 0)
                     ctx.restore()
                 }

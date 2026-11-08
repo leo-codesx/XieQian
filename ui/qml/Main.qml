@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
+import QtMultimedia
 
 import "."
 import "pages"
@@ -42,11 +43,43 @@ ApplicationWindow {
     }
 
     property int currentPage: 0
-    property int pendingPage: 0
+    // 真正显示在屏幕上的页面：转场动画过半时才切换，避免新页面在淡出阶段闪现
+    property int visiblePage: 0
     property bool resultOpen: false
 
     // 抽奖进行中（含结果弹窗未关闭）：左侧导航、顶栏按钮与整页点击均被锁住
-    readonly property bool uiLocked: homePage.isDrawing
+    readonly property bool uiLocked: homeLoader.item ? homeLoader.item.isDrawing === true : false
+
+    // 音效：三个短音频随 qrc 打包，开关由后端持久化
+    SoundEffect {
+        id: clickSound
+        source: "qrc:/ui/audio/click.wav"
+    }
+
+    SoundEffect {
+        id: spinSound
+        source: "qrc:/ui/audio/spin.wav"
+    }
+
+    SoundEffect {
+        id: winSound
+        source: "qrc:/ui/audio/win.wav"
+    }
+
+    function playClick() {
+        if (backendBridge.soundEnabled)
+            clickSound.play()
+    }
+
+    function playSpin() {
+        if (backendBridge.soundEnabled)
+            spinSound.play()
+    }
+
+    function playWin() {
+        if (backendBridge.soundEnabled)
+            winSound.play()
+    }
 
     function showResult(names) {
         resultCard.open(names)
@@ -57,20 +90,34 @@ ApplicationWindow {
             resultCard.close()
     }
 
+    // 页面首次访问时才激活对应的 Loader（异步实例化，之后常驻保留状态）
+    function activatePage(index) {
+        switch (index) {
+        case 0: homeLoader.active = true; break
+        case 1: addLoader.active = true; break
+        case 2: rosterLoader.active = true; break
+        case 3: historyLoader.active = true; break
+        case 4: toolsLoader.active = true; break
+        case 5: aboutLoader.active = true; break
+        case 6: settingsLoader.active = true; break
+        case 7: developerLoader.active = true; break
+        }
+    }
+
     function navigate(page) {
         var target = Math.max(0, Math.min(7, page))
-        if (target === currentPage && pageStack.currentIndex === target
-                && !pageSwitch.running)
+        if (target === currentPage && !pageSwitch.running)
             return
 
+        playClick()
         currentPage = target
-        pendingPage = target
+        activatePage(target)
 
         if (reducedMotion) {
             pageSwitch.stop()
-            pageStack.currentIndex = target
+            visiblePage = target
+            pageContainer.y = 0
             pageViewport.opacity = 1.0
-            pageStack.y = 0
             return
         }
 
@@ -188,21 +235,30 @@ ApplicationWindow {
                 TitleButton {
                     iconKind: 0
                     enabled: !window.uiLocked
-                    onTriggered: window.showMinimized()
+                    onTriggered: {
+                        window.playClick()
+                        window.showMinimized()
+                    }
                 }
 
                 TitleButton {
                     iconKind: 1
                     restore: window.maximized
                     enabled: !window.uiLocked
-                    onTriggered: window.toggleMaximize()
+                    onTriggered: {
+                        window.playClick()
+                        window.toggleMaximize()
+                    }
                 }
 
                 TitleButton {
                     iconKind: 2
                     danger: true
                     enabled: !window.uiLocked
-                    onTriggered: window.close()
+                    onTriggered: {
+                        window.playClick()
+                        window.close()
+                    }
                 }
             }
         }
@@ -319,51 +375,96 @@ ApplicationWindow {
                 anchors.fill: parent
 
                 Item {
-                    id: pageStack
+                    id: pageContainer
                     width: parent.width
                     height: parent.height
-                    // 页面自身保持 anchors.fill: parent，切换时只切换可见性
-                    property int currentIndex: 0
 
-                    HomePage {
-                        id: homePage
-                        visible: pageStack.currentIndex === 0
+                    // 8 个页面各挂一个 Loader：首次导航时才 active，
+                    // asynchronous 把实例化移出首帧，之后常驻保留页面状态。
+                    Loader {
+                        id: homeLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: true
+                        visible: window.visiblePage === 0
+                        source: "pages/HomePage.qml"
                     }
 
-                    AddPage {
-                        id: addPage
-                        visible: pageStack.currentIndex === 1
-
-                        onWheelCreated: function(name, options) {
-                            if (backendBridge.saveCustomWheel(name, options))
-                                homePage.activateWheel(name)
-                        }
+                    Loader {
+                        id: addLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 1
+                        source: "pages/AddPage.qml"
                     }
 
-                    RosterPage {
-                        visible: pageStack.currentIndex === 2
+                    Loader {
+                        id: rosterLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 2
+                        source: "pages/RosterPage.qml"
                     }
 
-                    HistoryPage {
-                        visible: pageStack.currentIndex === 3
+                    Loader {
+                        id: historyLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 3
+                        source: "pages/HistoryPage.qml"
                     }
 
-                    ToolsPage {
-                        visible: pageStack.currentIndex === 4
+                    Loader {
+                        id: toolsLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 4
+                        source: "pages/ToolsPage.qml"
                     }
 
-                    AboutPage {
-                        visible: pageStack.currentIndex === 5
+                    Loader {
+                        id: aboutLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 5
+                        source: "pages/AboutPage.qml"
                     }
 
-                    SettingsPage {
-                        visible: pageStack.currentIndex === 6
+                    Loader {
+                        id: settingsLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 6
+                        source: "pages/SettingsPage.qml"
                     }
 
                     // 开发者控制台：只从设置页的隐藏入口进入，不占导航位
-                    DeveloperPage {
-                        visible: pageStack.currentIndex === 7
+                    Loader {
+                        id: developerLoader
+                        anchors.fill: parent
+                        asynchronous: true
+                        active: false
+                        visible: window.visiblePage === 7
+                        source: "pages/DeveloperPage.qml"
                     }
+                }
+            }
+
+            // 新建转盘成功后同步选中到主页转盘
+            Connections {
+                target: addLoader.item
+                enabled: target !== null
+                ignoreUnknownSignals: true
+
+                function onWheelCreated(name, options) {
+                    if (backendBridge.saveCustomWheel(name, options) && homeLoader.item)
+                        homeLoader.item.activateWheel(name)
                 }
             }
 
@@ -395,8 +496,8 @@ ApplicationWindow {
 
             ScriptAction {
                 script: {
-                    pageStack.currentIndex = window.pendingPage
-                    pageStack.y = 8
+                    window.visiblePage = window.currentPage
+                    pageContainer.y = 8
                 }
             }
 
@@ -410,7 +511,7 @@ ApplicationWindow {
                 }
 
                 PropertyAnimation {
-                    target: pageStack
+                    target: pageContainer
                     property: "y"
                     to: 0
                     duration: 240
@@ -432,14 +533,18 @@ ApplicationWindow {
         onOpenedChanged: window.resultOpen = opened
 
         onCloseRequested: {
-            homePage.lastWinners = []
-            homePage.endDrawLock()
+            if (homeLoader.item) {
+                homeLoader.item.lastWinners = []
+                homeLoader.item.endDrawLock()
+            }
         }
 
         onContinueRequested: {
-            homePage.lastWinners = []
-            homePage.endDrawLock()
-            homePage.startDraw()
+            if (homeLoader.item) {
+                homeLoader.item.lastWinners = []
+                homeLoader.item.endDrawLock()
+                homeLoader.item.startDraw()
+            }
         }
     }
 

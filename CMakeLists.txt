@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(XieQian VERSION 1.1.1 LANGUAGES CXX)
+project(XieQian VERSION 1.1.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,19 +16,28 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# 核心逻辑库
+# 核心逻辑库：纯 C++，不链接任何 Qt 模块与平台 API
 file(GLOB_RECURSE CORE_SOURCES "src/core/*.cpp")
 add_library(xieqian_core STATIC ${CORE_SOURCES})
 target_include_directories(xieqian_core PUBLIC include)
 
-# 查找 Qt6
-find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Widgets Multimedia Network Concurrent)
+# 查找 Qt6（Sql 用于 SQLite 事务持久层；Core5Compat 可选，缺失时 GBK 走 Win32 代码页）
+find_package(Qt6 REQUIRED COMPONENTS Quick QuickControls2 Widgets Multimedia Network Sql
+             OPTIONAL_COMPONENTS Core5Compat)
 qt_standard_project_setup()
 
 # UI 应用可执行文件
 file(GLOB_RECURSE UI_SOURCES "src/ui/*.cpp" "src/ui/*.h")
 add_executable(XieQian WIN32 ${UI_SOURCES} ui/qml.qrc)
-target_link_libraries(XieQian PRIVATE xieqian_core Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Multimedia Qt6::Network Qt6::Concurrent)
+target_link_libraries(XieQian PRIVATE xieqian_core
+    Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Multimedia Qt6::Network Qt6::Sql)
+
+# Qt 6 把 QTextCodec 搬到了 Core5Compat。若构建环境提供该模块则启用，
+# 用于 GBK/GB18030 解码；否则回落 Win32 MultiByteToWideChar（见 text_decoder.cpp）。
+if(TARGET Qt6::Core5Compat)
+    target_link_libraries(XieQian PRIVATE Qt6::Core5Compat)
+    target_compile_definitions(XieQian PRIVATE XIEQIAN_HAS_QTEXTCODEC=1)
+endif()
 
 # 程序图标：rc 由 MSVC 资源编译器处理，仅 Windows 平台需要
 if(WIN32)

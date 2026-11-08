@@ -66,9 +66,13 @@ function tokenize(text) {
                 }
             }
 
-            var value = parseFloat(text.substring(start, index))
+            var raw = text.substring(start, index)
+            var value = Number(raw)
             if (isNaN(value))
-                throw new Error("数字格式有误：" + text.substring(start, index))
+                throw new Error("数字格式有误：" + raw)
+            // 1e999 这类字面量会溢出为 Infinity，提前报错比返回“无上限”更准确
+            if (!isFinite(value))
+                throw new Error("数字太大，超出计算范围")
             tokens.push({ type: "number", value: value })
             continue
         }
@@ -310,6 +314,156 @@ function evaluateNode(node, variables) {
     throw new Error("表达式结构异常")
 }
 
+// ─────────────────────────────────────────────────────────────
+// 精确分数运算
+// 用 {n, d} 表示有理数，所有中间结果都做约分与溢出检查；
+// 遇到 sin/log/开方等无理运算时返回 null，由调用方退回浮点结果。
+// ─────────────────────────────────────────────────────────────
+var kFractionLimit = 1e15
+
+function gcd(a, b) {
+    a = Math.abs(a)
+    b = Math.abs(b)
+    while (b > 0) {
+        var remainder = a % b
+        a = b
+        b = remainder
+    }
+    return a
+}
+
+function makeFraction(n, d) {
+    if (!isFinite(n) || !isFinite(d) || d === 0)
+        return null
+    if (Math.abs(n) > kFractionLimit || Math.abs(d) > kFractionLimit)
+        return null
+
+    if (d < 0) {
+        n = -n
+        d = -d
+    }
+
+    var divisor = gcd(n, d)
+    if (divisor > 1) {
+        n = n / divisor
+        d = d / divisor
+    }
+    if (!isFinite(n) || !isFinite(d))
+        return null
+
+    return { n: Math.round(n), d: Math.round(d) }
+}
+
+function decimalToFraction(value) {
+    if (!isFinite(value))
+        return null
+    if (value === Math.round(value) && Math.abs(value) <= kFractionLimit)
+        return { n: value, d: 1 }
+
+    // 最多按 6 位小数还原，足够覆盖计算器输入精度
+    var scale = 1e6
+    var numerator = Math.round(value * scale)
+    if (Math.abs(numerator) > kFractionLimit) {
+        scale = 1e3
+        numerator = Math.round(value * scale)
+    }
+    return makeFraction(numerator, scale)
+}
+
+function rationalPower(base, exponent) {
+    if (exponent < 0)
+        return null
+    var n = 1
+    var d = 1
+    for (var i = 0; i < exponent; ++i) {
+        n = n * base.n
+        d = d * base.d
+        if (!isFinite(n) || !isFinite(d)
+                || Math.abs(n) > kFractionLimit || Math.abs(d) > kFractionLimit)
+            return null
+    }
+    return makeFraction(n, d)
+}
+
+function evalRational(node, variables) {
+    if (node === null || node === undefined)
+        return null
+
+    switch (node.t) {
+    case "num":
+        return decimalToFraction(node.v)
+    case "var":
+        var value = variables[node.name]
+        if (value === undefined || !isFinite(value))
+            return null
+        return decimalToFraction(value)
+    case "neg":
+        var negated = evalRational(node.a, variables)
+        return negated ? makeFraction(-negated.n, negated.d) : null
+    case "bin":
+        var left = evalRational(node.a, variables)
+        if (!left)
+            return null
+        var right = evalRational(node.b, variables)
+        if (!right)
+            return null
+
+        if (node.op === "+")
+            return makeFraction(left.n * right.d + right.n * left.d, left.d * right.d)
+        if (node.op === "-")
+            return makeFraction(left.n * right.d - right.n * left.d, left.d * right.d)
+        if (node.op === "*")
+            return makeFraction(left.n * right.n, left.d * right.d)
+        if (node.op === "/") {
+            if (right.n === 0)
+                return null
+            return makeFraction(left.n * right.d, left.d * right.n)
+        }
+        if (node.op === "%")
+            return null
+        if (right.d !== 1 || Math.abs(right.n) > 32)
+            return null
+        if (right.n < 0) {
+            if (left.n === 0)
+                return null
+            var positive = rationalPower(left, -right.n)
+            return positive ? makeFraction(positive.d, positive.n) : null
+        }
+        return rationalPower(left, right.n)
+    case "fn":
+        var args = []
+        for (var i = 0; i < node.args.length; ++i) {
+            var argument = evalRational(node.args[i], variables)
+            if (!argument)
+                return null
+            args.push(argument)
+        }
+
+        if (node.name === "abs" && args.length === 1)
+            return makeFraction(Math.abs(args[0].n), args[0].d)
+        if (node.name === "sign" && args.length === 1)
+            return { n: args[0].n > 0 ? 1 : (args[0].n < 0 ? -1 : 0), d: 1 }
+        if ((node.name === "min" || node.name === "max") && args.length > 0) {
+            var best = args[0]
+            for (var k = 1; k < args.length; ++k) {
+                var compare = args[k].n * best.d - best.n * args[k].d
+                if (node.name === "min" ? compare < 0 : compare > 0)
+                    best = args[k]
+            }
+            return best
+        }
+        if (node.name === "floor" && args.length === 1)
+            return { n: Math.floor(args[0].n / args[0].d), d: 1 }
+        if (node.name === "ceil" && args.length === 1)
+            return { n: Math.ceil(args[0].n / args[0].d), d: 1 }
+        if (node.name === "round" && args.length === 1)
+            return { n: Math.round(args[0].n / args[0].d), d: 1 }
+        return null
+    }
+
+    return null
+}
+
 // 返回 { ok, value, error }，供计算器直接使用
 function evaluate(text, variables) {
     var source = String(text)
@@ -329,22 +483,33 @@ function evaluate(text, variables) {
     }
 
     if (!parsed.ok)
-        return { ok: false, value: NaN, error: parsed.error, repaired: false }
+        return { ok: false, value: NaN, error: parsed.error, repaired: false, fraction: null }
 
     try {
         var value = evaluateNode(parsed.root, variables ? variables : {})
         if (typeof value !== "number")
-            return { ok: false, value: NaN, error: "无法计算该表达式", repaired: repaired }
+            return { ok: false, value: NaN, error: "无法计算该表达式", repaired: repaired, fraction: null }
         // 分开报告 NaN 与 ±Infinity：前者几乎总是定义域问题，后者是除以 0 或溢出
         if (isNaN(value))
             return { ok: false, value: NaN,
-                     error: "结果没有定义，检查一下负数开方或 0 的对数", repaired: repaired }
+                     error: "结果没有定义，检查一下负数开方或 0 的对数", repaired: repaired, fraction: null }
         if (!isFinite(value))
             return { ok: false, value: NaN,
-                     error: "结果没有上限，看看是不是除以 0 或取了 0 的对数", repaired: repaired }
-        return { ok: true, value: value, error: "", repaired: repaired }
+                     error: "结果没有上限，看看是不是除以 0 或取了 0 的对数", repaired: repaired, fraction: null }
+
+        // 尽力给出精确分数；无理运算（sin/log/sqrt 等）会得到 null
+        var fraction = null
+        try {
+            var exact = evalRational(parsed.root, variables ? variables : {})
+            if (exact && exact.d !== 1)
+                fraction = exact
+        } catch (ignored) {
+            fraction = null
+        }
+
+        return { ok: true, value: value, error: "", repaired: repaired, fraction: fraction }
     } catch (error) {
-        return { ok: false, value: NaN, error: error.message, repaired: repaired }
+        return { ok: false, value: NaN, error: error.message, repaired: repaired, fraction: null }
     }
 }
 
@@ -422,4 +587,18 @@ function formatNumber(value) {
     if (Math.abs(rounded) >= 1e12)
         return rounded.toExponential(6)
     return String(rounded)
+}
+
+// 计算器显示格式：能精确表示成分数时同时给出分数与小数，例如 “5/6 ≈ 0.833333”
+function formatResult(outcome) {
+    if (!outcome || !outcome.ok)
+        return "错误"
+
+    var text = formatNumber(outcome.value)
+    var fraction = outcome.fraction
+    if (fraction && fraction.d > 1 && fraction.d <= 100000
+            && Math.abs(fraction.n) <= 1e12) {
+        return fraction.n + "/" + fraction.d + " ≈ " + text
+    }
+    return text
 }

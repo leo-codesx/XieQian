@@ -1,4 +1,4 @@
-#include "ai_manager.h"
+﻿#include "ai_manager.h"
 
 #include <QDebug>
 #include <QFile>
@@ -19,22 +19,12 @@ namespace {
 constexpr int kRequestTimeoutMs = 15000;
 // 图片上传比纯文本慢得多，OCR 每一步单独放宽超时
 constexpr int kOcrTimeoutMs = 60000;
+// 单张图片上限，避免 base64 之后把请求体和内存撑爆
+constexpr qint64 kMaxImageBytes = 12LL * 1024 * 1024;
 
-// 图片 OCR 使用独立的专用密钥与模型（内置通道），
-// 与设置页里用户自己的文本 AI 配置完全隔离。
-constexpr const char *kOcrApiKey = "sk-2ff8932b775b4adf946ee873af51939d";
-constexpr const char *kOcrBaseUrl = "https://api.deepseek.com";
-constexpr const char *kOcrModel = "deepseek-flash";
-
-// 文本任务的接口地址与模型只有默认值，密钥必须由用户在设置页提供
-constexpr const char *kTextDefaultBaseUrl = "https://api.deepseek.com";
-constexpr const char *kTextDefaultModel = "deepseek-flash";
-
-QString rosterPrompt()
-{
-    return QStringLiteral("请生成 15 个中国风的学生姓名和学号，严格按 JSON 数组格式返回："
-                          "[{\"name\":\"苏婉宁\",\"id\":\"001\"}]，不要包含其他任何废话");
-}
+// 文本任务与 OCR 都只使用用户在设置页配置的接口，应用内不存在任何内置密钥。
+constexpr const char *kDefaultBaseUrl = "https://api.deepseek.com";
+constexpr const char *kDefaultModel = "deepseek-flash";
 
 QString categoryPrompt()
 {
@@ -173,16 +163,26 @@ void AiManager::setApiConfig(const QString &apiKey, const QString &baseUrl, cons
     model_ = model.trimmed();
 }
 
+bool AiManager::hasApiKey() const
+{
+    return !apiKey_.isEmpty();
+}
+
+QString AiManager::missingKeyMessage()
+{
+    return QStringLiteral("请前往设置配置 API Key");
+}
+
 QString AiManager::effectiveModel() const
 {
-    return model_.isEmpty() ? QString::fromLatin1(kTextDefaultModel) : model_;
+    return model_.isEmpty() ? QString::fromLatin1(kDefaultModel) : model_;
 }
 
 QString AiManager::endpointUrl() const
 {
     QString base = baseUrl_.trimmed();
     if (base.isEmpty()) {
-        base = QString::fromLatin1(kTextDefaultBaseUrl);
+        base = QString::fromLatin1(kDefaultBaseUrl);
     }
 
     if (!base.contains(QStringLiteral("://"))) {
@@ -198,6 +198,31 @@ QString AiManager::endpointUrl() const
         return base;
     }
     return base + QStringLiteral("/chat/completions");
+}
+
+bool AiManager::isSecureEndpoint(const QUrl &url)
+{
+    const QString scheme = url.scheme().toLower();
+    if (scheme == QStringLiteral("https")) {
+        return true;
+    }
+    if (scheme != QStringLiteral("http")) {
+        return false;
+    }
+
+    // 本机回环地址允许 http，方便 Ollama 之类的本地推理服务
+    const QString host = url.host().toLower();
+    return host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1")
+           || host == QStringLiteral("::1");
+}
+
+bool AiManager::ensureApiKey()
+{
+    if (!apiKey_.isEmpty()) {
+        return true;
+    }
+    emit textAiKeyMissing();
+    return false;
 }
 
 void AiManager::postChat(const QJsonObject &payload, const QString &key, const QString &endpoint,
@@ -253,11 +278,6 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
     });
 }
 
-void AiManager::generateMockRoster()
-{
-    requestCompletion(rosterPrompt(), RequestKind::MockRoster);
-}
-
 void AiManager::generateAwardSpeech(const QString &winnerName)
 {
     const QString winner = winnerName.trimmed();
@@ -275,7 +295,7 @@ void AiManager::generateFunction(const QString &prompt)
 {
     const QString description = prompt.trimmed();
     if (description.isEmpty()) {
-        emit functionFailed(QStringLiteral("先描述一下想画的图形"));
+        emit functionFailed(QStringLiteral("先描述一下想要画的图形"));
         return;
     }
 
@@ -284,11 +304,9 @@ void AiManager::generateFunction(const QString &prompt)
 
 void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
 {
-    const QString key = apiKey_.trimmed();
-    if (key.isEmpty()) {
-        // 文本任务绝不回退内置密钥，也不静默失败：通知界面引导用户去设置页
-        emit textAiKeyMissing();
-        emitFailure(kind, QStringLiteral("请前往设置配置 API Key"));
+    if (!ensureApiKey()) {
+        // 文本任务绝不发任何后台请求，也不静默失败：通知界面引导用户去设置页
+        emitFailure(kind, missingKeyMessage());
         return;
     }
 
@@ -296,6 +314,10 @@ void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
     const QUrl url(endpoint);
     if (!url.isValid() || url.host().isEmpty()) {
         emitFailure(kind, QStringLiteral("AI 接口地址无效，请在设置页检查"));
+        return;
+    }
+    if (!isSecureEndpoint(url)) {
+        emitFailure(kind, QStringLiteral("AI 接口地址必须使用 https（本机地址除外）"));
         return;
     }
 
@@ -311,23 +333,10 @@ void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
     payload.insert(QStringLiteral("messages"), messages);
     payload.insert(QStringLiteral("stream"), false);
 
-    postChat(payload, key, endpoint, kRequestTimeoutMs,
+    postChat(payload, apiKey_, endpoint, kRequestTimeoutMs,
              [this, kind](bool ok, const QString &content, const QString &error) {
                  if (!ok) {
-                     if (kind == RequestKind::FunctionExpression) {
-                         emit functionFailed(error);
-                     }
-                     emit networkError(error);
-                     return;
-                 }
-
-                 if (kind == RequestKind::MockRoster) {
-                     const QVariantList roster = parseRoster(content);
-                     if (roster.isEmpty()) {
-                         emitFailure(kind, QStringLiteral("AI 返回的名单格式无法解析"));
-                         return;
-                     }
-                     emit mockRosterReady(roster);
+                     emitFailure(kind, error);
                      return;
                  }
 
@@ -352,6 +361,22 @@ void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
 
 void AiManager::postOcrChat(const QString &prompt, int timeoutMs, ChatHandler handler)
 {
+    if (!ensureApiKey()) {
+        handler(false, QString(), missingKeyMessage());
+        return;
+    }
+
+    const QString endpoint = endpointUrl();
+    const QUrl url(endpoint);
+    if (!url.isValid() || url.host().isEmpty()) {
+        handler(false, QString(), QStringLiteral("AI 接口地址无效，请在设置页检查"));
+        return;
+    }
+    if (!isSecureEndpoint(url)) {
+        handler(false, QString(), QStringLiteral("AI 接口地址必须使用 https（本机地址除外）"));
+        return;
+    }
+
     QJsonObject imageUrl;
     imageUrl.insert(QStringLiteral("url"), ocrImageUrl_);
     // high 等价于原图，保留表格里的小字
@@ -377,26 +402,30 @@ void AiManager::postOcrChat(const QString &prompt, int timeoutMs, ChatHandler ha
     messages.append(message);
 
     QJsonObject payload;
-    payload.insert(QStringLiteral("model"), QString::fromLatin1(kOcrModel));
+    payload.insert(QStringLiteral("model"), effectiveModel());
     payload.insert(QStringLiteral("messages"), messages);
-    // OCR 只需要确定性输出，关闭思考模式可明显降低延迟
-    QJsonObject thinking;
-    thinking.insert(QStringLiteral("type"), QStringLiteral("disabled"));
-    payload.insert(QStringLiteral("thinking"), thinking);
     payload.insert(QStringLiteral("stream"), false);
 
-    postChat(payload, QString::fromLatin1(kOcrApiKey),
-             QString::fromLatin1(kOcrBaseUrl) + QStringLiteral("/chat/completions"), timeoutMs,
-             std::move(handler));
+    postChat(payload, apiKey_, endpoint, timeoutMs, std::move(handler));
 }
 
 bool AiManager::prepareOcrImage(const QString &filePath)
 {
     ocrImageUrl_.clear();
 
+    if (filePath.isEmpty()) {
+        qWarning() << "empty image path for OCR";
+        return false;
+    }
+
     QFile file(filePath);
-    if (filePath.isEmpty() || !file.open(QIODevice::ReadOnly)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         qWarning() << "cannot open image for OCR:" << filePath;
+        return false;
+    }
+
+    if (file.size() > kMaxImageBytes) {
+        qWarning() << "image too large for OCR:" << filePath;
         return false;
     }
 
@@ -408,8 +437,19 @@ bool AiManager::prepareOcrImage(const QString &filePath)
     }
 
     const QString suffix = QFileInfo(filePath).suffix().toLower();
-    const QString mime = suffix == QStringLiteral("png") ? QStringLiteral("image/png")
-                                                        : QStringLiteral("image/jpeg");
+    QString mime = QStringLiteral("image/jpeg");
+    if (suffix == QStringLiteral("png")) {
+        mime = QStringLiteral("image/png");
+    } else if (suffix == QStringLiteral("webp")) {
+        mime = QStringLiteral("image/webp");
+    } else if (suffix == QStringLiteral("bmp")) {
+        mime = QStringLiteral("image/bmp");
+    } else if (suffix == QStringLiteral("gif")) {
+        mime = QStringLiteral("image/gif");
+    } else if (suffix == QStringLiteral("jpg") || suffix == QStringLiteral("jpeg")) {
+        mime = QStringLiteral("image/jpeg");
+    }
+
     ocrImageUrl_ = QStringLiteral("data:%1;base64,%2")
                        .arg(mime, QString::fromLatin1(raw.toBase64()));
     return true;
@@ -421,8 +461,13 @@ void AiManager::ocrFromImage(const QString &filePath)
     ocrFirstPass_.clear();
     ocrSecondPass_.clear();
 
+    if (!ensureApiKey()) {
+        failOcr(missingKeyMessage());
+        return;
+    }
+
     if (!prepareOcrImage(filePath)) {
-        failOcr(QStringLiteral("图片识别失败，请重试或手动导入"));
+        failOcr(QStringLiteral("图片识别失败，请重试或手动导入（图片需小于 12 MB）"));
         return;
     }
 
@@ -432,8 +477,13 @@ void AiManager::ocrFromImage(const QString &filePath)
 
 void AiManager::ocrScoresFromImage(const QString &filePath)
 {
+    if (!ensureApiKey()) {
+        failOcr(missingKeyMessage());
+        return;
+    }
+
     if (!prepareOcrImage(filePath)) {
-        failOcr(QStringLiteral("图片识别失败，请重试或手动导入"));
+        failOcr(QStringLiteral("图片识别失败，请重试或手动导入（图片需小于 12 MB）"));
         return;
     }
 
@@ -652,43 +702,11 @@ QString AiManager::cleanExpression(const QString &content)
 
 void AiManager::emitFailure(RequestKind kind, const QString &message)
 {
-    if (kind == RequestKind::MockRoster) {
-        emit mockRosterFailed(message);
-    } else if (kind == RequestKind::FunctionExpression) {
+    if (kind == RequestKind::FunctionExpression) {
         emit functionFailed(message);
     } else {
         emit awardSpeechFailed(message);
     }
-}
-
-QVariantList AiManager::parseRoster(const QString &content)
-{
-    const int start = content.indexOf(QLatin1Char('['));
-    const int end = content.lastIndexOf(QLatin1Char(']'));
-    if (start < 0 || end <= start) {
-        return {};
-    }
-
-    const QJsonDocument document = QJsonDocument::fromJson(content.mid(start, end - start + 1).toUtf8());
-    if (!document.isArray()) {
-        return {};
-    }
-
-    QVariantList roster;
-    for (const QJsonValue &value : document.array()) {
-        const QJsonObject entry = value.toObject();
-        const QString name = entry.value(QStringLiteral("name")).toString().trimmed();
-        if (name.isEmpty()) {
-            continue;
-        }
-
-        QVariantMap participant;
-        participant.insert(QStringLiteral("name"), name);
-        participant.insert(QStringLiteral("id"),
-                           entry.value(QStringLiteral("id")).toVariant().toString().trimmed());
-        roster.append(participant);
-    }
-    return roster;
 }
 
 QString AiManager::cleanSpeech(const QString &content)

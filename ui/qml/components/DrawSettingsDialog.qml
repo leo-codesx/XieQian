@@ -1,67 +1,65 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 
+import ".."
+
+/*!
+    抽奖规则对话框：抽取人数（1-10）与策略选择。
+
+    由 HomePage 顶部的规则按钮挂载，写入 backendBridge.updateDrawSettings，
+    设置会随 Config 表持久化，下次启动仍然生效。
+*/
 Item {
     id: dialogRoot
 
-    visible: false
-    opacity: 0
-    z: 100
+    property bool opened: false
+    property int count: 1
+    property int selected: 0
+    property bool dynamicHint: false
 
-    property int activeStrategy: 0
+    anchors.fill: parent
+    visible: opacity > 0.001
+    opacity: opened ? 1.0 : 0.0
+    z: 200
+    focus: opened
+
+    Keys.onEscapePressed: function(event) {
+        dialogRoot.close()
+        event.accepted = true
+    }
+
+    readonly property var strategies: [
+        { "label": "等概率抽取", "desc": "所有人机会相同" },
+        { "label": "防连抽", "desc": "优先未中签的人，全部抽过后再回到已中签者" },
+        { "label": "加权抽取", "desc": "按名单权重分配概率，权重越高越容易被抽中" }
+    ]
 
     function open() {
-        countSpin.value = backendBridge.drawCount;
-        activeStrategy = backendBridge.drawStrategy;
-        for (var i = 0; i < strategyRepeater.count; ++i) {
-            var button = strategyRepeater.itemAt(i);
-            if (button)
-                button.checked = (i === backendBridge.drawStrategy);
-        }
-        visible = true;
-        fadeIn.start();
+        count = Math.max(1, Math.min(10, backendBridge.drawCount))
+        selected = Math.max(0, Math.min(2, backendBridge.drawStrategy))
+        dynamicHint = backendBridge.dynamicWeights
+        opened = true
     }
 
     function close() {
-        fadeOut.start();
+        opened = false
     }
 
-    function selectedStrategy() {
-        for (var i = 0; i < strategyRepeater.count; ++i) {
-            var button = strategyRepeater.itemAt(i);
-            if (button && button.checked)
-                return i;
+    function apply() {
+        backendBridge.updateDrawSettings(count, selected)
+        close()
+    }
+
+    Behavior on opacity {
+        NumberAnimation {
+            duration: Theme.durationFast
+            easing.type: Easing.OutCubic
         }
-        return 0;
-    }
-
-    NumberAnimation {
-        id: fadeIn
-
-        target: dialogRoot
-        property: "opacity"
-        from: 0
-        to: 1
-        duration: 180
-    }
-
-    NumberAnimation {
-        id: fadeOut
-
-        target: dialogRoot
-        property: "opacity"
-        from: 1
-        to: 0
-        duration: 160
-
-        onStopped: dialogRoot.visible = false
     }
 
     Rectangle {
         anchors.fill: parent
-        color: "#1B2A38"
-        opacity: 0.42
+        color: Theme.overlay
 
         MouseArea {
             anchors.fill: parent
@@ -70,173 +68,300 @@ Item {
     }
 
     Rectangle {
-        id: panel
+        id: card
 
         anchors.centerIn: parent
-        width: 420
-        implicitHeight: form.implicitHeight + 56
-        color: "#FBF9F4"
-        border.width: 1
-        border.color: "#D4AF37"
+        width: Math.min(460, dialogRoot.width - 64)
+        height: body.implicitHeight + 56
+        radius: Theme.radiusDialog
+        color: Theme.surface
+        scale: dialogRoot.opened ? 1.0 : 0.96
 
-        ColumnLayout {
-            id: form
+        Behavior on scale {
+            NumberAnimation {
+                duration: Theme.durationNormal
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Column {
+            id: body
 
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 28
-            spacing: 18
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: 26
+            anchors.rightMargin: 26
+            spacing: 16
 
             Text {
-                text: "抽 奖 规 则"
-                color: "#2D3E50"
-                font.pixelSize: 18
-                font.letterSpacing: 4
+                text: "抽奖规则"
+                color: Theme.textPrimary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontH1
+                font.weight: Font.Bold
             }
 
+            // ── 抽取人数 ──
             Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: "#E3D3A3"
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
+                width: parent.width
+                height: 64
+                radius: Theme.radiusControl
+                color: Theme.surfaceAlt
 
                 Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    anchors.verticalCenter: parent.verticalCenter
                     text: "抽取人数"
-                    color: "#3F5A4E"
-                    font.pixelSize: 14
+                    color: Theme.textPrimary
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontBody
                 }
 
-                Item {
-                    Layout.fillWidth: true
-                }
+                Row {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
 
-                SpinBox {
-                    id: countSpin
+                    StepButton {
+                        text: "−"
+                        enabled: dialogRoot.count > 1
+                        onClicked: dialogRoot.count = Math.max(1, dialogRoot.count - 1)
+                    }
 
-                    from: 1
-                    to: 10
-                    editable: true
-                    implicitWidth: 130
-                    implicitHeight: 40
+                    Text {
+                        width: 44
+                        height: 36
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        text: dialogRoot.count
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
+                    }
+
+                    StepButton {
+                        text: "+"
+                        enabled: dialogRoot.count < 10
+                        onClicked: dialogRoot.count = Math.min(10, dialogRoot.count + 1)
+                    }
                 }
             }
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-
-                Text {
-                    text: "抽奖模式"
-                    color: "#3F5A4E"
-                    font.pixelSize: 14
-                }
-
-                ButtonGroup {
-                    id: strategyGroup
-                }
+            // ── 策略 ──
+            Column {
+                width: parent.width
+                spacing: 8
 
                 Repeater {
-                    id: strategyRepeater
+                    model: dialogRoot.strategies
 
-                    model: [
-                        { label: "等概率抽取" },
-                        { label: "防连抽" },
-                        { label: "加权抽取" }
-                    ]
+                    delegate: Rectangle {
+                        id: strategyRow
 
-                    delegate: RadioButton {
-                        Layout.fillWidth: true
-                        text: modelData.label
-                        font.pixelSize: 14
-                        ButtonGroup.group: strategyGroup
+                        width: body.width
+                        height: 62
+                        radius: Theme.radiusControl
+                        color: dialogRoot.selected === index
+                               ? Theme.primarySoft
+                               : Theme.surfaceAlt
+                        border.width: 1
+                        border.color: dialogRoot.selected === index
+                                      ? Theme.primary
+                                      : Theme.border
 
-                        onToggled: {
-                            if (checked)
-                                dialogRoot.activeStrategy = index;
+                        Rectangle {
+                            id: radio
+
+                            anchors.left: parent.left
+                            anchors.leftMargin: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 20
+                            height: 20
+                            radius: 10
+                            color: dialogRoot.selected === index ? Theme.primary : Theme.surface
+                            border.width: 1
+                            border.color: dialogRoot.selected === index
+                                          ? Theme.primary
+                                          : Theme.borderStrong
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 8
+                                height: 8
+                                radius: 4
+                                color: Theme.white
+                                visible: dialogRoot.selected === index
+                            }
+                        }
+
+                        Column {
+                            anchors.left: radio.right
+                            anchors.leftMargin: 12
+                            anchors.right: parent.right
+                            anchors.rightMargin: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 2
+
+                            Text {
+                                width: parent.width
+                                text: modelData.label
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: modelData.desc
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontMicro
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: dialogRoot.selected = index
                         }
                     }
                 }
-
-                Text {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 6
-                    visible: dialogRoot.activeStrategy === 2
-                    text: "* 请前往名单管理页调整各成员的中签权重"
-                    color: "#8A97A5"
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                }
             }
 
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 12
+            Text {
+                width: parent.width
+                visible: dialogRoot.dynamicHint
+                text: "动态权重已开启：抽中次数越多，下一次权重衰减越大。"
+                color: Theme.warning
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontMicro
+                wrapMode: Text.WordWrap
+            }
 
-                Item {
-                    Layout.fillWidth: true
-                }
+            Row {
+                width: parent.width
+                spacing: 10
 
-                Button {
-                    id: cancelButton
+                Item { width: Math.max(0, parent.width - 238); height: 1 }
 
-                    text: "取 消"
-                    implicitWidth: 110
-                    implicitHeight: 40
-
+                DialogAction {
+                    width: 96
+                    height: 42
+                    text: "取消"
                     onClicked: dialogRoot.close()
-
-                    background: Rectangle {
-                        radius: 2
-                        color: "transparent"
-                        border.width: 1
-                        border.color: "#C9C2B2"
-                    }
-
-                    contentItem: Text {
-                        text: cancelButton.text
-                        color: "#6B7A88"
-                        font.pixelSize: 15
-                        font.letterSpacing: 3
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                 }
 
-                Button {
-                    id: applyButton
-
-                    text: "应 用"
-                    implicitWidth: 110
-                    implicitHeight: 40
-
-                    onClicked: {
-                        backendBridge.updateDrawSettings(countSpin.value, dialogRoot.selectedStrategy());
-                        dialogRoot.close();
-                    }
-
-                    background: Rectangle {
-                        radius: 2
-                        color: "#2D3E50"
-                        border.width: 1
-                        border.color: "#D4AF37"
-                    }
-
-                    contentItem: Text {
-                        text: applyButton.text
-                        color: "#F8F6F0"
-                        font.pixelSize: 15
-                        font.letterSpacing: 3
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
+                DialogAction {
+                    width: 112
+                    height: 42
+                    text: "应用"
+                    primary: true
+                    onClicked: dialogRoot.apply()
                 }
             }
+        }
+    }
+
+    component StepButton: Item {
+        id: step
+
+        property string text: "+"
+        signal clicked()
+
+        width: 36
+        height: 36
+        opacity: enabled ? 1.0 : 0.35
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 10
+            color: mouse.containsMouse && step.enabled ? Theme.surface : Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: step.text
+            color: Theme.primary
+            font.family: Theme.fontFamily
+            font.pixelSize: 20
+            font.weight: Font.DemiBold
+        }
+
+        MouseArea {
+            id: mouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: step.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (step.enabled)
+                    step.clicked()
+            }
+        }
+    }
+
+    component DialogAction: Item {
+        id: action
+
+        property string text: ""
+        property bool primary: false
+        signal clicked()
+
+        height: 42
+        scale: mouse.pressed ? 0.96 : 1.0
+
+        Behavior on scale {
+            NumberAnimation {
+                duration: Theme.durationFast
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: action.primary ? Theme.primary : Theme.surface
+            border.width: action.primary ? 0 : 1
+            border.color: Theme.border
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: action.primary ? Theme.white : Theme.primarySoft
+            opacity: mouse.containsMouse ? (action.primary ? 0.12 : 0.55) : 0.0
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: Theme.durationFast
+                    easing.type: Easing.OutCubic
+                }
+            }
+        }
+
+        Text {
+            anchors.centerIn: parent
+            text: action.text
+            color: action.primary ? Theme.white : Theme.textPrimary
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontBody
+            font.weight: Font.DemiBold
+        }
+
+        MouseArea {
+            id: mouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: action.clicked()
         }
     }
 }

@@ -1,9 +1,13 @@
 #include <QApplication>
+#include <QDir>
 #include <QIcon>
+#include <QLockFile>
+#include <QMessageBox>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QScreen>
+#include <QStandardPaths>
 
 #include "backend_bridge.h"
 
@@ -205,11 +209,28 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("XieQian"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.1.1"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("1.1.5"));
     // 任务栏与窗口图标：rc 资源负责 exe 图标，这里保证运行时窗口也用同一枚图标
     app.setWindowIcon(QIcon(QStringLiteral(":/ui/assets/app-icon-512.png")));
 
+    // 单实例锁：两个进程同时写 SQLite 会互相覆盖状态，直接拦在启动阶段。
+    // 锁文件放在临时目录，进程异常退出时 QLockFile 会按 PID 判定并自动回收。
+    const QString lockPath = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                                 .filePath(QStringLiteral("XieQian.lock"));
+    QLockFile lockFile(lockPath);
+    lockFile.setStaleLockTime(0);
+    if (!lockFile.tryLock(150)) {
+        QMessageBox::information(nullptr, QStringLiteral("撷签"),
+                                 QStringLiteral("撷签已经在运行中，请勿重复启动。"));
+        return 0;
+    }
+
     BackendBridge backendBridge;
+    if (!backendBridge.storageReady()) {
+        QMessageBox::warning(nullptr, QStringLiteral("撷签 · 数据存储"),
+                             QStringLiteral("本地数据库初始化失败，本次运行的数据不会保存。\n\n%1")
+                                 .arg(backendBridge.storageError()));
+    }
 
     QQmlApplicationEngine engine;
     // QML 所有页面都通过 backendBridge 访问后端；缺这条注册会让按钮点击后全部无响应

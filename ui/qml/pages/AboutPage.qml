@@ -131,7 +131,7 @@ Item {
                         Text {
                             id: versionText
                             anchors.centerIn: parent
-                            text: "v1.1.1"
+                            text: "v1.1.5"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMicro
@@ -229,7 +229,7 @@ Item {
 
                                     Text {
                                         width: parent.width
-                                        text: "课堂抽签 · 随机分组 · 自定义转盘"
+                                        text: "课堂抽签 · 名单权重 · 自定义转盘"
                                         color: Theme.textSecondary
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fontBody
@@ -253,7 +253,7 @@ Item {
                                             }
 
                                             Text {
-                                                text: "1.1.1"
+                                                text: "1.1.5"
                                                 color: Theme.textPrimary
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fontCaption
@@ -425,11 +425,6 @@ Item {
             shadowHorizontalOffset: 0
             autoPaddingEnabled: true
         }
-    }
-
-    // 图标底板不需要投影，占位类型让 layer.effect 保持类型安全
-    component MultiEffectPlaceholder: MultiEffect {
-        shadowEnabled: false
     }
 
     // ─────────────────────────────────────────────────────────────
