@@ -64,16 +64,16 @@ const
   XQ_DWMWCP_ROUND = 2;
   XQ_SW_SHOWNORMAL = 1;
 
-function SetWindowRgn(hWnd: NativeInt; hRgn: LongWord; bRedraw: Boolean): Integer;
+function SetWindowRgn(hWnd: LongWord; hRgn: LongWord; bRedraw: Boolean): Integer;
   external 'SetWindowRgn@user32.dll stdcall';
 function CreateRoundRectRgn(x1, y1, x2, y2, nWidthEllipse, nHeightEllipse: Integer): LongWord;
   external 'CreateRoundRectRgn@gdi32.dll stdcall';
-function SetWindowLongW(hWnd: NativeInt; nIndex: Integer; dwNewLong: NativeInt): NativeInt;
+function SetWindowLongW(hWnd: LongWord; nIndex: Integer; dwNewLong: LongWord): LongWord;
   external 'SetWindowLongW@user32.dll stdcall';
-function CallWindowProcW(lpPrevWndFunc: NativeInt; hWnd: NativeInt; Msg: LongWord;
-  wParam, lParam: NativeInt): NativeInt;
+function CallWindowProcW(lpPrevWndFunc: LongWord; hWnd: LongWord; Msg: LongWord;
+  wParam, lParam: LongWord): LongWord;
   external 'CallWindowProcW@user32.dll stdcall';
-function DwmSetWindowAttribute(hwnd: NativeInt; dwAttribute: LongWord;
+function DwmSetWindowAttribute(hwnd: LongWord; dwAttribute: LongWord;
   var pvAttribute: LongWord; cbAttribute: LongWord): LongInt;
   external 'DwmSetWindowAttribute@dwmapi.dll stdcall';
 
@@ -90,7 +90,7 @@ var
   ProgressFill: TBitmapImage;
   FinishTitle: TNewStaticText;
   FinishSubtitle: TNewStaticText;
-  PrevWizardWndProc: NativeInt;
+  PrevWizardWndProc: LongWord;
   CornerPreference: LongWord;
   NextIsInstall: Boolean;
 
@@ -144,10 +144,10 @@ begin
                         CornerPreference, 4);
 end;
 
-function WizardWndProc(hWnd, Msg, wParam, lParam: NativeInt): NativeInt;
+function WizardWndProc(hWnd, Msg, wParam, lParam: LongWord): LongWord;
 var
   X, Y: Integer;
-  Hit: NativeInt;
+  Hit: LongWord;
 begin
   if Msg = XQ_WM_NCHITTEST then
   begin
