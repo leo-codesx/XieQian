@@ -56,13 +56,13 @@ const
   BrandColor = $00F68B3B;
   TextPrimaryColor = $00202020;
   TextSecondaryColor = $00606060;
-  WM_NCHITTEST = $0084;
-  HTCLIENT = 1;
-  HTCAPTION = 2;
-  GWL_WNDPROC = -4;
-  DWMWA_WINDOW_CORNER_PREFERENCE = 33;
-  DWMWCP_ROUND = 2;
-  SW_SHOWNORMAL = 1;
+  XQ_WM_NCHITTEST = $0084;
+  XQ_HTCLIENT = 1;
+  XQ_HTCAPTION = 2;
+  XQ_GWL_WNDPROC = -4;
+  XQ_DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+  XQ_DWMWCP_ROUND = 2;
+  XQ_SW_SHOWNORMAL = 1;
 
 function SetWindowRgn(hWnd: NativeInt; hRgn: LongWord; bRedraw: Boolean): Integer;
   external 'SetWindowRgn@user32.dll stdcall';
@@ -139,8 +139,8 @@ begin
                                ScaleX(24), ScaleY(24));
   if Region <> 0 then
     SetWindowRgn(WizardForm.Handle, Region, True);
-  CornerPreference := DWMWCP_ROUND;
-  DwmSetWindowAttribute(WizardForm.Handle, DWMWA_WINDOW_CORNER_PREFERENCE,
+  CornerPreference := XQ_DWMWCP_ROUND;
+  DwmSetWindowAttribute(WizardForm.Handle, XQ_DWMWA_WINDOW_CORNER_PREFERENCE,
                         CornerPreference, 4);
 end;
 
@@ -149,16 +149,16 @@ var
   X, Y: Integer;
   Hit: NativeInt;
 begin
-  if Msg = WM_NCHITTEST then
+  if Msg = XQ_WM_NCHITTEST then
   begin
     Hit := CallWindowProcW(PrevWizardWndProc, hWnd, Msg, wParam, lParam);
-    if Hit = HTCLIENT then
+    if Hit = XQ_HTCLIENT then
     begin
       X := lParam and $FFFF;
       Y := (lParam shr 16) and $FFFF;
       if (Y >= WizardForm.Top) and (Y < WizardForm.Top + ScaleY(72)) and
          (X < WizardForm.Left + WizardForm.ClientWidth - ScaleX(48)) then
-        Hit := HTCAPTION;
+        Hit := XQ_HTCAPTION;
     end;
     Result := Hit;
   end
@@ -189,7 +189,7 @@ var
   ErrorCode: Integer;
 begin
   ShellExec('', ExpandConstant('{app}\{#MyAppExeName}'), '', '',
-            SW_SHOWNORMAL, ewNoWait, ErrorCode);
+            XQ_SW_SHOWNORMAL, ewNoWait, ErrorCode);
   WizardForm.Close;
 end;
 
@@ -403,7 +403,7 @@ begin
   WizardForm.BackButton.Visible := False;
   WizardForm.CancelButton.Visible := False;
 
-  PrevWizardWndProc := SetWindowLongW(WizardForm.Handle, GWL_WNDPROC,
+  PrevWizardWndProc := SetWindowLongW(WizardForm.Handle, XQ_GWL_WNDPROC,
                                       CreateCallback(@WizardWndProc));
 end;
 
@@ -465,7 +465,7 @@ end;
 procedure DeinitializeSetup;
 begin
   if PrevWizardWndProc <> 0 then
-    SetWindowLongW(WizardForm.Handle, GWL_WNDPROC, PrevWizardWndProc);
+    SetWindowLongW(WizardForm.Handle, XQ_GWL_WNDPROC, PrevWizardWndProc);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
