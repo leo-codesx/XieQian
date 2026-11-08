@@ -131,7 +131,7 @@ Item {
                         Text {
                             id: versionText
                             anchors.centerIn: parent
-                            text: "v1.2.1"
+                            text: "v1.2.2"
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMicro
@@ -253,7 +253,7 @@ Item {
                                             }
 
                                             Text {
-                                                text: "1.2.1"
+                                                text: "1.2.2"
                                                 color: Theme.textPrimary
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fontCaption
