@@ -10,7 +10,6 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppFullName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-SetupWindowTitle={#MyAppFullName} 安装向导
 DefaultDirName={autopf}\XieQian
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -90,17 +89,18 @@ begin
   WizardForm.NextButton.Font.Style := [fsBold];
   WizardForm.BackButton.Font.Name := BrandFont;
   WizardForm.CancelButton.Font.Name := BrandFont;
-  WizardForm.HelpButton.Font.Name := BrandFont;
 end;
 
 procedure InitializeWizard;
 begin
+  WizardForm.Caption := '撷签 XieQian 安装向导';
   WizardForm.Color := clWhite;
   WizardForm.WelcomePage.Color := clWhite;
   WizardForm.InnerPage.Color := clWhite;
   WizardForm.FinishedPage.Color := clWhite;
 
   ApplyWizardFonts;
+  WizardForm.WelcomeLabel1.Caption := '撷签 XieQian 安装向导';
   WizardForm.WelcomeLabel2.Caption := '妙择一签，落定心安';
 
   // 在“选择目标位置”页之后，新增“选择数据目录”页
