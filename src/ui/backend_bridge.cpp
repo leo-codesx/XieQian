@@ -1413,6 +1413,8 @@ bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &
     // Windows 上 QFile::copy 不会覆盖已有文件，先把旧库改名释放路径
     if (hadCurrent && !QFile::rename(dbPath, backupPath)) {
         error = QStringLiteral("当前数据库文件被占用，无法覆盖。请关闭其它撷签窗口后重试");
+        (void)openDatabase();
+        (void)readState();
         return false;
     }
     removeSqliteSidecars(dbPath);
