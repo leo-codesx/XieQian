@@ -33,7 +33,6 @@
         <file>qml/components/AiKeyDialog.qml</file>
 
         <file>assets/app-icon-512.png</file>
-        <file>audio/click.wav</file>
         <file>audio/spin.wav</file>
         <file>audio/win.wav</file>
     </qresource>

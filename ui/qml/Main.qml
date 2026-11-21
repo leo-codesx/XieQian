@@ -50,12 +50,7 @@ ApplicationWindow {
     // 抽奖进行中（含结果弹窗未关闭）：左侧导航、顶栏按钮与整页点击均被锁住
     readonly property bool uiLocked: homeLoader.item ? homeLoader.item.isDrawing === true : false
 
-    // 音效：三个短音频随 qrc 打包，开关由后端持久化
-    SoundEffect {
-        id: clickSound
-        source: "qrc:/ui/audio/click.wav"
-    }
-
+    // 音效：只保留转盘开始旋转与中奖结果两处，开关由后端持久化
     SoundEffect {
         id: spinSound
         source: "qrc:/ui/audio/spin.wav"
@@ -64,11 +59,6 @@ ApplicationWindow {
     SoundEffect {
         id: winSound
         source: "qrc:/ui/audio/win.wav"
-    }
-
-    function playClick() {
-        if (backendBridge.soundEnabled)
-            clickSound.play()
     }
 
     function playSpin() {
@@ -109,7 +99,6 @@ ApplicationWindow {
         if (target === currentPage && !pageSwitch.running)
             return
 
-        playClick()
         currentPage = target
         activatePage(target)
 
@@ -235,30 +224,21 @@ ApplicationWindow {
                 TitleButton {
                     iconKind: 0
                     enabled: !window.uiLocked
-                    onTriggered: {
-                        window.playClick()
-                        window.showMinimized()
-                    }
+                    onTriggered: window.showMinimized()
                 }
 
                 TitleButton {
                     iconKind: 1
                     restore: window.maximized
                     enabled: !window.uiLocked
-                    onTriggered: {
-                        window.playClick()
-                        window.toggleMaximize()
-                    }
+                    onTriggered: window.toggleMaximize()
                 }
 
                 TitleButton {
                     iconKind: 2
                     danger: true
                     enabled: !window.uiLocked
-                    onTriggered: {
-                        window.playClick()
-                        window.close()
-                    }
+                    onTriggered: window.close()
                 }
             }
         }

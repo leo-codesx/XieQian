@@ -107,6 +107,27 @@ TEST_CASE("explicit effective weights override participant weights", "[draw][wei
     }
 }
 
+TEST_CASE("dynamic weight snapshot shrinks immediately after a win", "[draw][weight]") {
+    Roster roster;
+    roster.add(makeParticipant("A", 2.0, 0, 0));
+    roster.add(makeParticipant("B", 2.0, 0, 0));
+
+    const double before = dynamicWeight(roster.at(0));
+    roster.recordWins({participantId(roster.at(0))});
+    const double after = dynamicWeight(roster.at(0));
+
+    REQUIRE(after < before);
+    REQUIRE(roster.at(0).drawCount == 1);
+
+    // 抽奖前冻结的快照必须真正携带这个衰减值，而不是原始权重
+    std::vector<Participant> snapshot = roster.enabledParticipants();
+    for (Participant &participant : snapshot) {
+        participant.weight = dynamicWeight(participant);
+    }
+    REQUIRE(std::abs(snapshot.front().weight - after) < 1e-12);
+    REQUIRE(snapshot.front().weight < 2.0);
+}
+
 TEST_CASE("static mode keeps weights unchanged", "[draw][weight]") {
     std::vector<Participant> pool;
     pool.push_back(makeParticipant("hot", 1.0, 100, 5));

@@ -16,7 +16,7 @@
 
 namespace {
 
-constexpr int kRequestTimeoutMs = 15000;
+constexpr int kRequestTimeoutMs = 30000;
 // 图片上传比纯文本慢得多，OCR 每一步单独放宽超时
 constexpr int kOcrTimeoutMs = 60000;
 // 单张图片上限，避免 base64 之后把请求体和内存撑爆
@@ -147,6 +147,103 @@ QStringList pickBestResult(const QStringList &first, const QStringList &second,
     return best;
 }
 
+QString responseErrorMessage(const QByteArray &body)
+{
+    const QJsonDocument document = QJsonDocument::fromJson(body);
+    if (!document.isObject()) {
+        return QString();
+    }
+
+    const QJsonObject root = document.object();
+    QString message = root.value(QStringLiteral("error"))
+                          .toObject()
+                          .value(QStringLiteral("message"))
+                          .toString()
+                          .trimmed();
+    if (message.isEmpty()) {
+        message = root.value(QStringLiteral("message")).toString().trimmed();
+    }
+    if (message.size() > 160) {
+        message = message.left(160) + QStringLiteral("…");
+    }
+    return message;
+}
+
+// 把底层网络错误翻译成用户能据此排查的中文提示，并尽量带上服务端返回的原因
+QString networkFailureMessage(QNetworkReply *reply, bool timedOut, const QByteArray &body)
+{
+    if (timedOut) {
+        return QStringLiteral("请求超时：30 秒内没有收到服务器响应，请检查网络连接后重试");
+    }
+
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString serverDetail = responseErrorMessage(body);
+    const auto withDetail = [&serverDetail](const QString &message) {
+        return serverDetail.isEmpty() ? message
+                                      : message + QStringLiteral("（服务端返回：") + serverDetail
+                                            + QStringLiteral("）");
+    };
+
+    switch (reply->error()) {
+    case QNetworkReply::HostNotFoundError:
+        return QStringLiteral("无法解析服务器域名，请检查电脑是否连网，或核对 Base URL 是否拼写正确");
+    case QNetworkReply::ConnectionRefusedError:
+        return QStringLiteral("服务器拒绝连接，请检查接口地址、端口或代理设置");
+    case QNetworkReply::RemoteHostClosedError:
+        return QStringLiteral("服务器意外断开连接，请稍后重试");
+    case QNetworkReply::TimeoutError:
+        return QStringLiteral("请求超时，请检查网络连接后重试");
+    case QNetworkReply::TemporaryNetworkFailureError:
+    case QNetworkReply::NetworkSessionFailedError:
+        return QStringLiteral("无法连接到服务器，请检查电脑是否连网");
+    case QNetworkReply::SslHandshakeFailedError:
+        return QStringLiteral("HTTPS 安全连接失败，请检查系统时间或网络代理设置");
+    case QNetworkReply::ProxyConnectionRefusedError:
+    case QNetworkReply::ProxyConnectionClosedError:
+    case QNetworkReply::ProxyNotFoundError:
+    case QNetworkReply::ProxyTimeoutError:
+        return QStringLiteral("代理服务器连接失败，请检查电脑的代理设置");
+    case QNetworkReply::ProxyAuthenticationRequiredError:
+        return QStringLiteral("代理服务器需要账号密码，请检查代理设置");
+    case QNetworkReply::AuthenticationRequiredError:
+        return withDetail(QStringLiteral("API Key 无效或未授权，请到设置页检查 Key"));
+    case QNetworkReply::ContentAccessDenied:
+        return withDetail(QStringLiteral("服务器拒绝访问（403），请检查 API Key 权限"));
+    case QNetworkReply::ContentNotFoundError:
+        return withDetail(QStringLiteral("接口地址不存在（404），请检查 Base URL 是否正确"));
+    case QNetworkReply::ContentOperationNotPermittedError:
+    case QNetworkReply::ContentConflictError:
+    case QNetworkReply::UnknownContentError:
+        break;
+    default:
+        break;
+    }
+
+    if (status == 401) {
+        return withDetail(QStringLiteral("API Key 无效或未授权，请到设置页检查 Key"));
+    }
+    if (status == 402) {
+        return withDetail(QStringLiteral("账户余额不足或未开通该模型"));
+    }
+    if (status == 403) {
+        return withDetail(QStringLiteral("服务器拒绝访问（403），请检查 API Key 权限"));
+    }
+    if (status == 404) {
+        return withDetail(QStringLiteral("接口地址不存在（404），请检查 Base URL 是否正确"));
+    }
+    if (status == 429) {
+        return withDetail(QStringLiteral("请求过于频繁（429），请稍后再试"));
+    }
+    if (status >= 500) {
+        return withDetail(QStringLiteral("服务器暂时不可用（%1），请稍后再试").arg(status));
+    }
+    if (!serverDetail.isEmpty()) {
+        return QStringLiteral("AI 接口返回错误：") + serverDetail;
+    }
+
+    return QStringLiteral("网络异常，请检查电脑是否连网后重试");
+}
+
 }  // namespace
 
 AiManager::AiManager(QObject *parent)
@@ -193,10 +290,23 @@ QString AiManager::endpointUrl() const
         base.chop(1);
     }
 
+    // 去掉协议之外的重复斜杠，避免拼出 https://host//v1/...
+    static const QRegularExpression duplicateSlashes(QStringLiteral("(?<!:)/{2,}"));
+    base.replace(duplicateSlashes, QStringLiteral("/"));
+
     // 允许用户填写 https://api.deepseek.com、.../v1，或直接填完整地址
     if (base.endsWith(QStringLiteral("/chat/completions"), Qt::CaseInsensitive)) {
         return base;
     }
+
+    // 大多数兼容 OpenAI 的服务都需要 /v1；已经带版本号（如 /v1、/compatible-mode/v1）时不重复追加
+    static const QRegularExpression versionSegment(
+        QStringLiteral("(?:^|/)v\\d+(?:beta|alpha)?(?:/|$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (!versionSegment.match(QUrl(base).path()).hasMatch()) {
+        base += QStringLiteral("/v1");
+    }
+
     return base + QStringLiteral("/chat/completions");
 }
 
@@ -238,27 +348,31 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
     // 硬性超时：超时后中止请求，finished 中统一回调失败
     QTimer::singleShot(timeoutMs, reply, [reply]() {
         if (reply->isRunning()) {
-            qWarning() << "AI request timed out";
+            // 自己的主动中止与用户取消区分开，超时才提示超时
+            reply->setProperty("xqTimedOut", true);
             reply->abort();
         }
     });
 
     connect(reply, &QNetworkReply::finished, this, [reply, handler = std::move(handler)]() {
+        const bool timedOut = reply->property("xqTimedOut").toBool();
+        const QByteArray body = reply->readAll();
         reply->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "AI request failed:" << reply->errorString();
-            const bool timedOut = reply->error() == QNetworkReply::OperationCanceledError;
-            handler(false, QString(),
-                    timedOut ? QStringLiteral("网络拥堵，请稍后再试")
-                             : QStringLiteral("网络异常，请稍后再试"));
+            const QString message = networkFailureMessage(reply, timedOut, body);
+            qWarning().noquote() << "AI request failed:" << reply->errorString() << message;
+            handler(false, QString(), message);
             return;
         }
 
-        const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+        const QJsonDocument document = QJsonDocument::fromJson(body);
         const QJsonArray choices = document.object().value(QStringLiteral("choices")).toArray();
         if (choices.isEmpty()) {
-            handler(false, QString(), QStringLiteral("AI 返回内容为空"));
+            handler(false, QString(),
+                    document.isObject()
+                        ? QStringLiteral("AI 返回内容为空")
+                        : QStringLiteral("AI 返回内容无法解析，请检查 Base URL 是否指向兼容 OpenAI 的接口"));
             return;
         }
 

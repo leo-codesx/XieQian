@@ -22,6 +22,8 @@ Item {
     property string wheelKey: ""
     property var rosterOptions: []
     property var rosterWeights: []
+    // 与 rosterOptions 一一对应的参与者 ID，WheelItem 用它向后端查询实时权重
+    property var rosterIds: []
     // 与 rosterOptions 一一对应的“已中签”标记，用于置灰扇区
     property var rosterDrawn: []
     property int pendingIndex: -1
@@ -59,6 +61,7 @@ Item {
                                         : rosterOptions
     // 默认转盘按后端给出的“有效权重”分配扇区；自定义转盘的选项没有权重，均分
     readonly property var wheelWeights: customWheel ? [] : rosterWeights
+    readonly property var wheelIds: customWheel ? [] : rosterIds
     // 只有“防连抽”策略才把已中签者置灰，其它策略下不显示这一状态
     readonly property var wheelDimmed: (customWheel || backendBridge.drawStrategy !== 1)
                                        ? [] : rosterDrawn
@@ -98,11 +101,13 @@ Item {
     function refreshRosterOptions() {
         var list = []
         var weights = []
+        var ids = []
         var drawn = []
         var participants = backendBridge.getParticipantsWithStatus()
         for (var i = 0; i < participants.length; ++i) {
             if (participants[i].enabled) {
                 list.push(String(participants[i].name))
+                ids.push(String(participants[i].id))
                 // 直接向后端查询有效权重：等概率恒为 1，防连抽给已中签者 0，
                 // 加权策略下由引擎快照公式给出衰减值，保证扇区宽度就是真实中奖概率
                 var weight = Number(backendBridge.getEffectiveWeight(String(participants[i].id)))
@@ -112,6 +117,7 @@ Item {
         }
         rosterOptions = list
         rosterWeights = weights
+        rosterIds = ids
         rosterDrawn = drawn
     }
 
@@ -612,6 +618,7 @@ Item {
                         height: width
                         options: page.wheelOptions
                         weights: page.wheelWeights
+                        itemIds: page.wheelIds
                         dimmed: page.wheelDimmed
                         showPointer: true
                         motionEnabled: page.animationEnabled
@@ -654,8 +661,6 @@ Item {
                     onClicked: {
                         if (page.busy)
                             return
-                        if (Window.window && typeof Window.window.playClick === "function")
-                            Window.window.playClick()
                         drawSettings.open()
                     }
                 }

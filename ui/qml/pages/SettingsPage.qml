@@ -18,6 +18,7 @@ Item {
     anchors.fill: parent
 
     property string pendingRestorePath: ""
+    property string restoreError: ""
     property string developerError: ""
     property bool aiConfigured: backendBridge.hasAIConfig()
     readonly property string developerPassword: "LuvXcm080511"
@@ -363,7 +364,7 @@ Item {
 
                         ActionRow {
                             title: "恢复数据"
-                            subtitle: "从 JSON 备份还原全部内容"
+                            subtitle: "从 JSON 或 data.db 备份还原全部内容"
                             actionLabel: "恢复"
                             onTriggered: {
                                 var path = backendBridge.chooseRestorePath()
@@ -721,10 +722,97 @@ Item {
                     onClicked: {
                         var restored = backendBridge.importData(page.pendingRestorePath)
                         restoreDialog.close()
-                        page.showToast(restored ? "已恢复备份"
-                                                : "恢复失败：" + backendBridge.lastError())
+                        if (restored) {
+                            page.showToast("已恢复备份")
+                        } else {
+                            page.restoreError = String(backendBridge.lastError())
+                            restoreErrorDialog.open()
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 恢复失败原因
+    // ─────────────────────────────────────────────────────────────
+    Dialog {
+        id: restoreErrorDialog
+
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 340
+        height: 224
+        padding: 0
+
+        background: Rectangle {
+            radius: Theme.radiusDialog
+            color: Theme.surface
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+                shadowBlur: 0.7
+                shadowVerticalOffset: 16
+                shadowHorizontalOffset: 0
+                autoPaddingEnabled: true
+            }
+        }
+
+        contentItem: Column {
+            width: 340
+
+            Item {
+                width: parent.width
+                height: 177
+
+                Column {
+                    anchors.fill: parent
+                    anchors.leftMargin: 20
+                    anchors.rightMargin: 20
+                    anchors.topMargin: 22
+                    anchors.bottomMargin: 14
+                    spacing: 10
+
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "恢复失败"
+                        color: Theme.textPrimary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 17
+                        font.weight: Font.DemiBold
+                    }
+
+                    Text {
+                        width: parent.width
+                        height: 92
+                        text: page.restoreError
+                        color: Theme.danger
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontCaption
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Theme.separator
+            }
+
+            AlertButton {
+                width: parent.width
+                height: 46
+                label: "知道了"
+                strong: true
+                onClicked: restoreErrorDialog.close()
             }
         }
     }

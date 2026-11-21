@@ -132,6 +132,11 @@ private:
     [[nodiscard]] bool ensureSchema();
     [[nodiscard]] bool readState();
     [[nodiscard]] bool writeState();
+    // 把 JSON 状态写成一份独立的 SQLite 数据库，供恢复时覆盖 data.db
+    [[nodiscard]] bool buildDatabaseFromState(const QString &dbPath, const QJsonObject &root,
+                                              QString &error);
+    // 关闭数据库后覆盖 data.db，再重新打开并加载；失败时尽力回滚到原库
+    [[nodiscard]] bool replaceDatabaseFromFile(const QString &sourcePath, QString &error);
     // 返回 false 表示发现了旧 JSON 但迁移写盘失败（此时内存中已载入旧数据，不再被空库覆盖）
     [[nodiscard]] bool migrateLegacyJson();
     [[nodiscard]] static QString dataFilePath();

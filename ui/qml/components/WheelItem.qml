@@ -21,6 +21,8 @@ Item {
     property var options: []
     // 与 options 一一对应的权重；缺省或非法值按 1 处理，0 表示该扇区概率为 0
     property var weights: []
+    // 与 options 一一对应的参与者 ID；提供时直接向后端查询实时有效权重
+    property var itemIds: []
     // 与 options 一一对应的“已中签”标记：防连抽模式下置灰显示
     property var dimmed: []
     property real angle: 0
@@ -49,19 +51,33 @@ Item {
         return Math.max(1, options.length)
     }
 
-    // 归一化权重：非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分
+    // 归一化权重：提供 ID 时以后端实时有效权重为准；否则用传入的权重。
+    // 非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分。
+    function weightAt(index) {
+        if (wheelRoot.itemIds && index < wheelRoot.itemIds.length) {
+            var id = String(wheelRoot.itemIds[index])
+            if (id.length > 0 && typeof backendBridge !== "undefined" && backendBridge) {
+                var live = Number(backendBridge.getEffectiveWeight(id))
+                if (isFinite(live) && live >= 0)
+                    return live
+            }
+        }
+
+        if (wheelRoot.weights && index < wheelRoot.weights.length) {
+            var value = Number(wheelRoot.weights[index])
+            if (isFinite(value) && value >= 0)
+                return value
+        }
+        return 1
+    }
+
     function weightList() {
         var count = effectiveCount()
         var list = []
         var total = 0
 
         for (var i = 0; i < count; ++i) {
-            var weight = 1
-            if (wheelRoot.weights && i < wheelRoot.weights.length) {
-                var value = Number(wheelRoot.weights[i])
-                if (isFinite(value) && value >= 0)
-                    weight = value
-            }
+            var weight = weightAt(i)
             list.push(weight)
             total += weight
         }
@@ -127,6 +143,11 @@ Item {
     }
 
     onWeightsChanged: {
+        if (sectorCanvas)
+            sectorCanvas.requestPaint()
+    }
+
+    onItemIdsChanged: {
         if (sectorCanvas)
             sectorCanvas.requestPaint()
     }

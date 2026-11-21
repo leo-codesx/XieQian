@@ -88,6 +88,22 @@ bool configFlag(const QHash<QString, QString> &config, const char *key, bool fal
     return value == QStringLiteral("1") || value == QStringLiteral("true");
 }
 
+bool looksLikeSqliteDatabase(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    return file.read(16).startsWith("SQLite format 3");
+}
+
+void removeSqliteSidecars(const QString &dbPath)
+{
+    QFile::remove(dbPath + QStringLiteral("-wal"));
+    QFile::remove(dbPath + QStringLiteral("-shm"));
+    QFile::remove(dbPath + QStringLiteral("-journal"));
+}
+
 }  // namespace
 
 BackendBridge::BackendBridge(QObject *parent)
@@ -580,9 +596,13 @@ QString BackendBridge::drawWinner()
     // 原始名单在开奖前保持不变，避免半途改写导致概率与展示不一致。
     std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
     if (dynamicWeights_) {
+        double totalWeight = 0.0;
         for (xieqian::core::Participant &participant : snapshot) {
             participant.weight = calculateEffectiveWeight(participant);
+            totalWeight += participant.weight;
         }
+        qInfo().nospace() << "[dynamic-weight] applied to " << snapshot.size()
+                          << " participants, total effective weight=" << totalWeight;
     }
 
     const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
@@ -606,9 +626,13 @@ QVariantList BackendBridge::drawMultipleWinners()
 
     std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
     if (dynamicWeights_) {
+        double totalWeight = 0.0;
         for (xieqian::core::Participant &participant : snapshot) {
             participant.weight = calculateEffectiveWeight(participant);
+            totalWeight += participant.weight;
         }
+        qInfo().nospace() << "[dynamic-weight] applied to " << snapshot.size()
+                          << " participants, total effective weight=" << totalWeight;
     }
 
     const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
@@ -675,10 +699,8 @@ double BackendBridge::calculateEffectiveWeight(const xieqian::core::Participant 
         return participant.weight;
     }
 
-    const double base = std::max(0.0, participant.weight);
-    const double decay = std::exp(-static_cast<double>(participant.drawCount) / 3.0);
-    const double streakPenalty = std::max(0.1, 1.0 - static_cast<double>(participant.streak) * 0.2);
-    return base * decay * streakPenalty;
+    // 与 DrawEngine 共用同一套动态权重公式，避免两边衰减系数不一致
+    return xieqian::core::dynamicWeight(participant);
 }
 
 double BackendBridge::effectiveWeight(const xieqian::core::Participant &participant) const
@@ -1283,8 +1305,9 @@ QString BackendBridge::chooseBackupPath()
 
 QString BackendBridge::chooseRestorePath()
 {
-    return QFileDialog::getOpenFileName(nullptr, QStringLiteral("恢复数据"), QString(),
-                                        QStringLiteral("JSON Files (*.json)"));
+    return QFileDialog::getOpenFileName(
+        nullptr, QStringLiteral("恢复数据"), QString(),
+        QStringLiteral("备份文件 (*.json *.db);;JSON 备份 (*.json);;SQLite 备份 (*.db)"));
 }
 
 bool BackendBridge::exportData(const QString &filePath)
@@ -1322,6 +1345,109 @@ bool BackendBridge::exportData(const QString &filePath)
     return true;
 }
 
+bool BackendBridge::buildDatabaseFromState(const QString &dbPath, const QJsonObject &root,
+                                           QString &error)
+{
+    QFile::remove(dbPath);
+    removeSqliteSidecars(dbPath);
+
+    const QString connection = QStringLiteral("xieqian_restore_build");
+    if (QSqlDatabase::contains(connection)) {
+        QSqlDatabase::removeDatabase(connection);
+    }
+
+    bool ok = false;
+    {
+        QSqlDatabase restored = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+        restored.setDatabaseName(dbPath);
+        if (!restored.open()) {
+            error = QStringLiteral("无法创建恢复数据库：%1").arg(restored.lastError().text());
+            restored = QSqlDatabase();
+        } else {
+            // 借主连接指针把已解析的 JSON 写进临时库，写完立即释放文件句柄
+            database_ = restored;
+            storageReady_ = true;
+            applyData(root);
+            if (!ensureSchema()) {
+                error = storageError_.isEmpty() ? QStringLiteral("初始化恢复数据库失败")
+                                                : storageError_;
+            } else if (!writeState()) {
+                error = storageError_.isEmpty() ? QStringLiteral("写入恢复数据失败")
+                                                : storageError_;
+            } else {
+                ok = true;
+            }
+
+            database_.close();
+            database_ = QSqlDatabase();
+            storageReady_ = false;
+            restored = QSqlDatabase();
+        }
+    }
+    QSqlDatabase::removeDatabase(connection);
+
+    if (!ok) {
+        QFile::remove(dbPath);
+        removeSqliteSidecars(dbPath);
+    }
+    return ok;
+}
+
+bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &error)
+{
+    const QString dbPath = dataFilePath();
+    QDir().mkpath(QFileInfo(dbPath).absolutePath());
+
+    if (QFileInfo(sourcePath).absoluteFilePath() == QFileInfo(dbPath).absoluteFilePath()) {
+        if (!openDatabase() || !readState()) {
+            error = QStringLiteral("数据库无法读取，请确认文件未被占用");
+            return false;
+        }
+        return true;
+    }
+
+    const QString backupPath = dbPath + QStringLiteral(".restore-backup");
+    QFile::remove(backupPath);
+    const bool hadCurrent = QFile::exists(dbPath);
+
+    // Windows 上 QFile::copy 不会覆盖已有文件，先把旧库改名释放路径
+    if (hadCurrent && !QFile::rename(dbPath, backupPath)) {
+        error = QStringLiteral("当前数据库文件被占用，无法覆盖。请关闭其它撷签窗口后重试");
+        return false;
+    }
+    removeSqliteSidecars(dbPath);
+
+    if (!QFile::copy(sourcePath, dbPath)) {
+        if (hadCurrent) {
+            QFile::rename(backupPath, dbPath);
+        } else {
+            QFile::remove(dbPath);
+        }
+        error = QStringLiteral("无法覆盖数据库文件，请检查数据目录是否可写或文件是否被占用");
+        (void)openDatabase();
+        (void)readState();
+        return false;
+    }
+
+    if (!openDatabase() || !readState()) {
+        closeDatabase();
+        QFile::remove(dbPath);
+        removeSqliteSidecars(dbPath);
+        if (hadCurrent) {
+            QFile::rename(backupPath, dbPath);
+        }
+        error = QStringLiteral("备份数据库格式不正确或无法读取，已恢复到原数据");
+        (void)openDatabase();
+        (void)readState();
+        return false;
+    }
+
+    if (hadCurrent) {
+        QFile::remove(backupPath);
+    }
+    return true;
+}
+
 bool BackendBridge::importData(const QString &filePath)
 {
     lastError_.clear();
@@ -1330,26 +1456,62 @@ bool BackendBridge::importData(const QString &filePath)
         return false;
     }
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        lastError_ = QStringLiteral("无法读取备份文件：%1").arg(filePath);
-        return false;
+    const bool sqliteBackup = looksLikeSqliteDatabase(filePath);
+    QJsonObject root;
+    if (!sqliteBackup) {
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly)) {
+            lastError_ = QStringLiteral("无法读取备份文件：%1（文件可能被占用或没有权限）").arg(filePath);
+            return false;
+        }
+
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+        file.close();
+
+        if (document.isNull() || !document.isObject() || !hasStateArrays(document.object())) {
+            lastError_ = QStringLiteral("备份文件格式不正确：不是有效的撷签 JSON 备份");
+            return false;
+        }
+        root = document.object();
     }
 
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    file.close();
+    // 恢复前先停止延迟落盘并合并 WAL，确保所有句柄都已释放
+    if (saveTimer_ != nullptr) {
+        saveTimer_->stop();
+    }
+    if (dirty_) {
+        (void)writeState();
+    }
+    if (database_.isValid() && database_.isOpen()) {
+        QSqlQuery checkpoint(database_);
+        checkpoint.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
+    }
+    closeDatabase();
 
-    if (document.isNull() || !document.isObject() || !hasStateArrays(document.object())) {
-        lastError_ = QStringLiteral("这不是有效的撷签备份文件");
-        return false;
+    bool restored = false;
+    if (sqliteBackup) {
+        restored = replaceDatabaseFromFile(filePath, lastError_);
+    } else {
+        const QString tempPath = dataFilePath() + QStringLiteral(".restore-tmp");
+        QFile::remove(tempPath);
+        removeSqliteSidecars(tempPath);
+
+        if (!buildDatabaseFromState(tempPath, root, lastError_)) {
+            QFile::remove(tempPath);
+            removeSqliteSidecars(tempPath);
+            // 临时库构建失败时回到原数据库，避免内存里留下半套数据
+            (void)openDatabase();
+            (void)readState();
+            return false;
+        }
+
+        restored = replaceDatabaseFromFile(tempPath, lastError_);
+        QFile::remove(tempPath);
+        removeSqliteSidecars(tempPath);
     }
 
-    applyData(document.object());
-    const bool saved = writeState();
-    if (!saved) {
-        lastError_ = storageError_.isEmpty()
-                         ? QStringLiteral("写入数据库失败")
-                         : storageError_;
+    if (!restored) {
+        return false;
     }
 
     emit rosterUpdated();
@@ -1360,7 +1522,7 @@ bool BackendBridge::importData(const QString &filePath)
     emit motionEnabledChanged();
     emit drawSettingsChanged();
     emit dynamicWeightsChanged();
-    return saved;
+    return true;
 }
 
 QJsonObject BackendBridge::stateToJson() const
