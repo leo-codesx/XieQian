@@ -23,6 +23,8 @@ Item {
     property var weights: []
     // 与 options 一一对应的参与者 ID；提供时直接向后端查询实时有效权重
     property var itemIds: []
+    // 绘制与落点共用同一份权重快照；刷新时才重新向后端查询
+    property var resolvedWeights: []
     // 与 options 一一对应的“已中签”标记：防连抽模式下置灰显示
     property var dimmed: []
     property real angle: 0
@@ -45,14 +47,15 @@ Item {
 
     signal finished()
 
+    Component.onCompleted: refreshWeights()
+
     function effectiveCount() {
         if (!options || options.length === 0)
             return 8
         return Math.max(1, options.length)
     }
 
-    // 归一化权重：提供 ID 时以后端实时有效权重为准；否则用传入的权重。
-    // 非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分。
+    // 取单人扇区权重：提供 ID 时向后端查询实时有效权重，否则用传入的权重
     function weightAt(index) {
         if (wheelRoot.itemIds && index < wheelRoot.itemIds.length) {
             var id = String(wheelRoot.itemIds[index])
@@ -71,13 +74,42 @@ Item {
         return 1
     }
 
+    function resolveWeights() {
+        var count = effectiveCount()
+        var list = []
+        for (var i = 0; i < count; ++i)
+            list.push(weightAt(i))
+        return list
+    }
+
+    function refreshWeights() {
+        resolvedWeights = resolveWeights()
+        if (sectorCanvas)
+            sectorCanvas.requestPaint()
+    }
+
+    // 旋转中不改盘面：落点与已绘制扇区必须来自同一份快照，否则指针会停错人；
+    // 旋转结束后会统一刷新一次，期间的变更不会丢
+    function requestWeightsRefresh() {
+        if (spinActive || spinAnimation.running)
+            return
+        refreshWeights()
+    }
+
+    // 归一化权重：非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分
     function weightList() {
         var count = effectiveCount()
+        var source = wheelRoot.resolvedWeights
+        if (!source || source.length !== count)
+            source = resolveWeights()
+
         var list = []
         var total = 0
 
         for (var i = 0; i < count; ++i) {
-            var weight = weightAt(i)
+            var weight = Number(source[i])
+            if (!isFinite(weight) || weight < 0)
+                weight = 1
             list.push(weight)
             total += weight
         }
@@ -110,6 +142,12 @@ Item {
         if (spinAnimation.running)
             return
 
+        // 只有扇区数量变了才重建快照；开奖后权重已变但列表长度不变，
+        // 此时必须继续用开奖前的快照，保证指针落点与盘面几何一致
+        if (wheelRoot.resolvedWeights.length !== effectiveCount()) {
+            refreshWeights()
+        }
+
         // 坐标系约定：扇区 0 从 -90°（指针所在的 12 点方向）开始顺时针绘制，
         // 所以扇区 k 的中心相对 12 点偏移为前面扇区角度之和加半个扇区。
         // 指针固定朝上，盘面需要转过 (360 - 中心角度) 才能让中心对准指针。
@@ -137,20 +175,11 @@ Item {
         spinAnimation.start()
     }
 
-    onOptionsChanged: {
-        if (sectorCanvas)
-            sectorCanvas.requestPaint()
-    }
+    onOptionsChanged: requestWeightsRefresh()
 
-    onWeightsChanged: {
-        if (sectorCanvas)
-            sectorCanvas.requestPaint()
-    }
+    onWeightsChanged: requestWeightsRefresh()
 
-    onItemIdsChanged: {
-        if (sectorCanvas)
-            sectorCanvas.requestPaint()
-    }
+    onItemIdsChanged: requestWeightsRefresh()
 
     onDimmedChanged: {
         if (sectorCanvas)
@@ -171,6 +200,7 @@ Item {
                 return
 
             wheelRoot.spinActive = false
+            wheelRoot.refreshWeights()
             wheelRoot.finished()
         }
     }
