@@ -78,6 +78,10 @@ public:
     Q_INVOKABLE QString lastError() const;
     // 进程内单调毫秒，用于倒计时等不受系统时间修改影响的计算
     Q_INVOKABLE qint64 monotonicMilliseconds() const;
+    // 运行时信息：供关于页展示，避免版本号/环境信息硬编码在 QML
+    Q_INVOKABLE QString qtVersion() const;
+    Q_INVOKABLE QString buildTimestamp() const;
+    Q_INVOKABLE int schemaVersion() const;
 
     int rosterCount() const;
 

@@ -121,7 +121,7 @@ Item {
                         Text {
                             id: versionText
                             anchors.centerIn: parent
-                            text: "v1.2.3"
+                            text: "v" + Qt.application.version
                             color: Theme.textSecondary
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontMicro
@@ -243,7 +243,7 @@ Item {
                                             }
 
                                             Text {
-                                                text: "1.2.3"
+                                                text: Qt.application.version
                                                 color: Theme.textPrimary
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fontCaption
@@ -288,6 +288,74 @@ Item {
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fontCaption
                                                 font.weight: Font.DemiBold
+                                            }
+                                        }
+                                    }
+
+                                    Item { width: 1; height: 8 }
+
+                                    Row {
+                                        spacing: 0
+
+                                        Column {
+                                            width: 84
+                                            spacing: 2
+
+                                            Text {
+                                                text: "Qt"
+                                                color: Theme.textTertiary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: 10
+                                            }
+
+                                            Text {
+                                                text: backendBridge.qtVersion()
+                                                color: Theme.textPrimary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontCaption
+                                                font.weight: Font.DemiBold
+                                            }
+                                        }
+
+                                        Column {
+                                            width: 96
+                                            spacing: 2
+
+                                            Text {
+                                                text: "存储格式"
+                                                color: Theme.textTertiary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: 10
+                                            }
+
+                                            Text {
+                                                text: "v" + backendBridge.schemaVersion()
+                                                color: Theme.textPrimary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontCaption
+                                                font.weight: Font.DemiBold
+                                            }
+                                        }
+
+                                        Column {
+                                            width: 96
+                                            spacing: 2
+
+                                            Text {
+                                                text: "构建"
+                                                color: Theme.textTertiary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: 10
+                                            }
+
+                                            Text {
+                                                width: parent.width
+                                                text: backendBridge.buildTimestamp()
+                                                color: Theme.textPrimary
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontCaption
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideRight
                                             }
                                         }
                                     }

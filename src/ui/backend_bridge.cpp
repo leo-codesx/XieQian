@@ -1519,6 +1519,29 @@ qint64 BackendBridge::monotonicMilliseconds() const
     return clock.elapsed();
 }
 
+QString BackendBridge::qtVersion() const
+{
+    return QString::fromLatin1(qVersion());
+}
+
+QString BackendBridge::buildTimestamp() const
+{
+    return QStringLiteral(__DATE__ " " __TIME__);
+}
+
+int BackendBridge::schemaVersion() const
+{
+    if (!database_.isValid() || !database_.isOpen()) {
+        return 0;
+    }
+
+    QSqlQuery query(database_);
+    if (query.exec(QStringLiteral("PRAGMA user_version")) && query.next()) {
+        return query.value(0).toInt();
+    }
+    return 0;
+}
+
 // ─────────────────────────────────────────────────────────────
 // 文件对话框与导入导出
 // ─────────────────────────────────────────────────────────────
