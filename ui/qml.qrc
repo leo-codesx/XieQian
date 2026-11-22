@@ -29,6 +29,10 @@
         <file>qml/components/CardShadow.qml</file>
         <file>qml/components/CardShadowBehind.qml</file>
         <file>qml/components/IosSwitch.qml</file>
+        <file>qml/components/PageHeader.qml</file>
+        <file>qml/components/GroupedList.qml</file>
+        <file>qml/components/ListRow.qml</file>
+        <file>qml/components/PrimaryButton.qml</file>
         <file>qml/components/DrawSettingsDialog.qml</file>
         <file>qml/components/AiKeyDialog.qml</file>
 

@@ -98,10 +98,10 @@ QtObject {
     // 圆角
     // ─────────────────────────────────────────────────────────────
     readonly property int radiusWindow: 12
-    readonly property int radiusCard: 18
+    readonly property int radiusCard: 16 // v1.2.3: 18
     readonly property int radiusListCard: 18
     readonly property int radiusDialog: 20
-    readonly property int radiusControl: 14
+    readonly property int radiusControl: 10 // v1.2.3: 14
     readonly property int radiusButton: 14
     readonly property int radiusSmall: 8
     readonly property int radiusPill: 999
@@ -112,7 +112,7 @@ QtObject {
     readonly property string fontFamily: "Microsoft YaHei UI"
 
     // iOS Large Title
-    readonly property int fontLargeTitle: 34
+    readonly property int fontLargeTitle: 32 // v1.2.3: 34
     readonly property int fontDisplay: 32
     readonly property int fontH0: 24
     readonly property int fontH1: 20

@@ -89,26 +89,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "设置"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "让撷签更贴合你的课堂习惯"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "设置"
+                subtitle: "让撷签更贴合你的课堂习惯"
             }
         }
 
@@ -137,99 +127,84 @@ Item {
 
                 GroupLabel { text: "偏好设置" }
 
-                Rectangle {
-                    width: parent.width
-                    height: preferenceColumn.height
-                    radius: Theme.radiusCard
-                    color: Theme.surface
+                GroupedList {
+                    ListRow {
+                        first: true
+                        height: 64
 
-                    CardShadow {}
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.cardPadding
+                            anchors.right: soundSwitch.left
+                            anchors.rightMargin: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
 
-                    Column {
-                        id: preferenceColumn
-                        width: parent.width
-
-                        Item {
-                            width: parent.width
-                            height: 64
-
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: Theme.cardPadding
-                                anchors.right: soundSwitch.left
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    text: "音效"
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontBody
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: "抽取与揭晓时播放提示音"
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontCaption
-                                    elide: Text.ElideRight
-                                }
+                            Text {
+                                text: "音效"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
                             }
 
-                            IosSwitch {
-                                id: soundSwitch
-                                anchors.right: parent.right
-                                anchors.rightMargin: Theme.cardPadding
-                                anchors.verticalCenter: parent.verticalCenter
-                                checked: backendBridge.soundEnabled
-                                onToggled: function(value) {
-                                    backendBridge.soundEnabled = value
-                                }
+                            Text {
+                                width: parent.width
+                                text: "抽取与揭晓时播放提示音"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontCaption
+                                elide: Text.ElideRight
                             }
                         }
 
-                        Sep {}
+                        IosSwitch {
+                            id: soundSwitch
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.cardPadding
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: backendBridge.soundEnabled
+                            onToggled: function(value) {
+                                backendBridge.soundEnabled = value
+                            }
+                        }
+                    }
 
-                        Item {
-                            width: parent.width
-                            height: 64
+                    ListRow {
+                        height: 64
 
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: Theme.cardPadding
-                                anchors.right: motionSwitch.left
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.cardPadding
+                            anchors.right: motionSwitch.left
+                            anchors.rightMargin: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
 
-                                Text {
-                                    text: "动效"
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontBody
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: "转盘旋转与揭晓的完整动画"
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontCaption
-                                    elide: Text.ElideRight
-                                }
+                            Text {
+                                text: "动效"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
                             }
 
-                            IosSwitch {
-                                id: motionSwitch
-                                anchors.right: parent.right
-                                anchors.rightMargin: Theme.cardPadding
-                                anchors.verticalCenter: parent.verticalCenter
-                                checked: backendBridge.motionEnabled
-                                onToggled: function(value) {
-                                    backendBridge.motionEnabled = value
-                                }
+                            Text {
+                                width: parent.width
+                                text: "转盘旋转与揭晓的完整动画"
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontCaption
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        IosSwitch {
+                            id: motionSwitch
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.cardPadding
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: backendBridge.motionEnabled
+                            onToggled: function(value) {
+                                backendBridge.motionEnabled = value
                             }
                         }
                     }
@@ -240,51 +215,41 @@ Item {
                     topPadding: 22
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: aiColumn.height
-                    radius: Theme.radiusCard
-                    color: Theme.surface
+                GroupedList {
+                    ListRow {
+                        first: true
+                        height: 68
 
-                    CardShadow {}
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.cardPadding
+                            anchors.right: parent.right
+                            anchors.rightMargin: Theme.cardPadding
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
 
-                    Column {
-                        id: aiColumn
-                        width: parent.width
+                            Text {
+                                text: "接口配置"
+                                color: Theme.textPrimary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontBody
+                                font.weight: Font.DemiBold
+                            }
 
-                        Item {
-                            width: parent.width
-                            height: 68
-
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: Theme.cardPadding
-                                anchors.right: parent.right
-                                anchors.rightMargin: Theme.cardPadding
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 3
-
-                                Text {
-                                    text: "接口配置"
-                                    color: Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontBody
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: (page.aiConfigured ? "已配置 Key。" : "尚未配置 Key。")
-                                          + "图片识别、成绩调权、颁奖词与函数生成都会使用这里的 Key"
-                                    color: page.aiConfigured ? Theme.success : Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontCaption
-                                    wrapMode: Text.WordWrap
-                                }
+                            Text {
+                                width: parent.width
+                                text: (page.aiConfigured ? "已配置 Key。" : "尚未配置 Key。")
+                                      + "图片识别、成绩调权、颁奖词与函数生成都会使用这里的 Key"
+                                color: page.aiConfigured ? Theme.success : Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontCaption
+                                wrapMode: Text.WordWrap
                             }
                         }
+                    }
 
-                        Sep {}
+                    ListRow {
+                        height: 60
 
                         FieldRow {
                             id: apiKeyRow
@@ -293,8 +258,10 @@ Item {
                             password: true
                             maximumLength: 256
                         }
+                    }
 
-                        Sep {}
+                    ListRow {
+                        height: 60
 
                         FieldRow {
                             id: apiBaseRow
@@ -303,8 +270,10 @@ Item {
                             smallFont: true
                             maximumLength: 512
                         }
+                    }
 
-                        Sep {}
+                    ListRow {
+                        height: 60
 
                         FieldRow {
                             id: modelRow
@@ -332,17 +301,10 @@ Item {
                     topPadding: 22
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: dataColumn.height
-                    radius: Theme.radiusCard
-                    color: Theme.surface
-
-                    CardShadow {}
-
-                    Column {
-                        id: dataColumn
-                        width: parent.width
+                GroupedList {
+                    ListRow {
+                        first: true
+                        height: 62
 
                         ActionRow {
                             title: "备份数据"
@@ -359,8 +321,10 @@ Item {
                                     page.showToast("备份失败：" + backendBridge.lastError())
                             }
                         }
+                    }
 
-                        Sep {}
+                    ListRow {
+                        height: 62
 
                         ActionRow {
                             title: "恢复数据"
@@ -374,8 +338,10 @@ Item {
                                 }
                             }
                         }
+                    }
 
-                        Sep {}
+                    ListRow {
+                        height: 62
 
                         ActionRow {
                             title: "抹除全部记录"
@@ -931,22 +897,6 @@ Item {
         color: Theme.textTertiary
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontCaption
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 卡片内分割线：左侧留白，不顶到卡片边缘
-    // ─────────────────────────────────────────────────────────────
-    component Sep: Item {
-        width: parent ? parent.width : 0
-        height: 1
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.leftMargin: Theme.cardPadding
-            anchors.right: parent.right
-            height: 1
-            color: Theme.separator
-        }
     }
 
     // ─────────────────────────────────────────────────────────────
