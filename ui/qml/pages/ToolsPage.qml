@@ -70,18 +70,23 @@ Item {
     property string plotText: "x = 16sin^3(t), y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)"
     // 数学键盘的变量键随表达式类型切换：参数方程给 t，隐式方程给 x/y，其余给 x
     readonly property var plotVariableKeys: {
+        // 固定给出 x 与 y，保证隐式方程首次输入就能直接敲 y；t 只在参数方程时追加
+        var keys = ["x", "y"]
         var text = String(plotText)
         if (/\bt\b/.test(text) || (/\bx\s*=/.test(text) && /\by\s*=/.test(text)))
-            return ["t"]
-        if (!/^\s*y\s*=/.test(text) && /\bx\b/.test(text) && /\by\b/.test(text))
-            return ["x", "y"]
-        return ["x"]
+            keys.push("t")
+        return keys
     }
     // 参数方程的参数 t 扫过几整圈：螺旋线、蝴蝶曲线需要多圈才能画完
     property int plotTurns: 1
     property var plotPaths: []
     property var plotBounds: ({ "xmin": -1.0, "xmax": 1.0, "ymin": -1.0, "ymax": 1.0,
                                 "uniform": true })
+    // 当前视图范围（缩放/平移后改这里），plotBounds 保留作复位基准
+    property var viewBounds: ({ "xmin": -1.0, "xmax": 1.0, "ymin": -1.0, "ymax": 1.0,
+                                "uniform": true })
+    // 当前绘制的表达式，用于缩放后按视域重采样
+    property var currentPlotSpec: null
     property real plotProgress: 0.0
     property bool hasPlot: false
     property string plotError: ""
@@ -238,6 +243,7 @@ Item {
         }
 
         plotBounds = bounds
+        viewBounds = clampView(bounds)
         plotPaths = paths
         hasPlot = true
         plotProgress = reducedMotion ? 1.0 : 0.0
@@ -254,6 +260,153 @@ Item {
         return [minimum - pad, maximum + pad]
     }
 
+    // 视域跨度限制在 1e-6 ~ 1e6，避免缩放到浮点失效或一次跨出可用范围
+    function clampView(bounds) {
+        var centerX = (bounds.xmin + bounds.xmax) / 2
+        var centerY = (bounds.ymin + bounds.ymax) / 2
+        var spanX = Math.min(1e6, Math.max(1e-6, bounds.xmax - bounds.xmin))
+        var spanY = Math.min(1e6, Math.max(1e-6, bounds.ymax - bounds.ymin))
+        return { "xmin": centerX - spanX / 2, "xmax": centerX + spanX / 2,
+                 "ymin": centerY - spanY / 2, "ymax": centerY + spanY / 2,
+                 "uniform": bounds.uniform === true }
+    }
+
+    // 以画布归一化坐标 (ax, ay) 为不动点缩放
+    function zoomView(factor, ax, ay) {
+        if (!hasPlot || !isFinite(factor) || factor <= 0)
+            return
+
+        var b = viewBounds
+        var spanX = b.xmax - b.xmin
+        var spanY = b.ymax - b.ymin
+        if (!isFinite(spanX) || !isFinite(spanY) || spanX <= 0 || spanY <= 0)
+            return
+
+        var nextSpanX = spanX / factor
+        var nextSpanY = spanY / factor
+        var anchorX = b.xmin + ax * spanX
+        var anchorY = b.ymax - ay * spanY
+
+        viewBounds = clampView({ "xmin": anchorX - ax * nextSpanX,
+                                 "xmax": anchorX + (1 - ax) * nextSpanX,
+                                 "ymin": anchorY - (1 - ay) * nextSpanY,
+                                 "ymax": anchorY + ay * nextSpanY,
+                                 "uniform": b.uniform === true })
+    }
+
+    function panView(dxPixels, dyPixels, canvasWidth, canvasHeight) {
+        if (!hasPlot || canvasWidth <= 0 || canvasHeight <= 0)
+            return
+
+        var b = viewBounds
+        var spanX = b.xmax - b.xmin
+        var spanY = b.ymax - b.ymin
+        var shiftX = -dxPixels / canvasWidth * spanX
+        var shiftY = dyPixels / canvasHeight * spanY
+
+        viewBounds = clampView({ "xmin": b.xmin + shiftX, "xmax": b.xmax + shiftX,
+                                 "ymin": b.ymin + shiftY, "ymax": b.ymax + shiftY,
+                                 "uniform": b.uniform === true })
+    }
+
+    function finishGrowth() {
+        growthAnimation.stop()
+        plotProgress = 1.0
+    }
+
+    // 缩放/平移后按当前视域重新采样显式函数，避免放大后锯齿
+    function resampleForView() {
+        if (!hasPlot || !currentPlotSpec)
+            return
+        if (currentPlotSpec.kind !== "explicit")
+            return
+
+        var compiled = Parser.compile(currentPlotSpec.expr)
+        if (!compiled.ok)
+            return
+
+        var b = viewBounds
+        var span = b.xmax - b.xmin
+        if (!isFinite(span) || span <= 0)
+            return
+
+        var samples = Math.max(200, Math.min(4000, Math.round(600 * 20 / span)))
+        var result = sampleExplicit(compiled, b.xmin, b.xmax, samples, (b.ymax - b.ymin) * 0.5)
+        if (result) {
+            plotPaths = result.paths
+            plotCanvas.requestPaint()
+        }
+    }
+
+    function resetView() {
+        if (!hasPlot)
+            return
+
+        viewBounds = clampView(plotBounds)
+        resampleForView()
+        plotCanvas.requestPaint()
+    }
+
+    // 统一采样：返回分段点集与 y 范围；jumpLimit<=0 时按数据范围自动取阈值
+    function sampleExplicit(compiled, xmin, xmax, samples, jumpLimit) {
+        var span = xmax - xmin
+        if (!isFinite(span) || span <= 0 || samples < 2)
+            return null
+
+        var xs = []
+        var ys = []
+        var valid = []
+        var minimum = Infinity
+        var maximum = -Infinity
+
+        for (var i = 0; i < samples; ++i) {
+            var x = xmin + span * i / (samples - 1)
+            var y = compiled.fn({ "x": x })
+            var usable = isFinite(y) && Math.abs(y) <= 1e4
+            xs.push(x)
+            ys.push(y)
+            valid.push(usable)
+            if (usable) {
+                minimum = Math.min(minimum, y)
+                maximum = Math.max(maximum, y)
+            }
+        }
+
+        if (minimum === Infinity)
+            return null
+
+        // 相邻点跳变超过数据跨度一半即视为极点：tan / 1÷x 两侧反号会远超阈值，
+        // 而 sin、x^2 这类连续曲线的相邻增量远小于该值
+        var limit = jumpLimit > 0 ? jumpLimit : Math.max(1e-9, (maximum - minimum) * 0.5)
+        var paths = []
+        var current = []
+
+        for (var k = 0; k < samples; ++k) {
+            if (!valid[k]) {
+                if (current.length > 1)
+                    paths.push(current)
+                current = []
+                continue
+            }
+            if (current.length > 0) {
+                var previous = current[current.length - 1]
+                if (Math.abs(ys[k] - previous[1]) > limit) {
+                    if (current.length > 1)
+                        paths.push(current)
+                    current = []
+                }
+            }
+            current.push([xs[k], ys[k]])
+        }
+        if (current.length > 1)
+            paths.push(current)
+
+        if (paths.length === 0)
+            return null
+
+        return { "paths": paths, "minY": minimum, "maxY": maximum }
+    }
+
     function computeExplicit(spec) {
         var compiled = Parser.compile(spec.expr)
         if (!compiled.ok) {
@@ -267,39 +420,17 @@ Item {
             }
         }
 
-        var samples = 600
-        var paths = []
-        var current = []
-        var minimum = Infinity
-        var maximum = -Infinity
-
-        for (var i = 0; i < samples; ++i) {
-            var x = -10.0 + 20.0 * i / (samples - 1)
-            var y = compiled.fn({ "x": x })
-
-            if (!isFinite(y) || Math.abs(y) > 1e4) {
-                if (current.length > 1)
-                    paths.push(current)
-                current = []
-                continue
-            }
-
-            current.push([x, y])
-            minimum = Math.min(minimum, y)
-            maximum = Math.max(maximum, y)
-        }
-        if (current.length > 1)
-            paths.push(current)
-
-        if (paths.length === 0) {
+        var result = sampleExplicit(compiled, -10.0, 10.0, 600, 0)
+        if (!result) {
             plotError = "这个表达式在可见范围内没有曲线"
             return
         }
 
-        var vertical = padBounds(minimum, maximum)
-        storePaths(paths, { "xmin": -10.0, "xmax": 10.0,
-                            "ymin": vertical[0], "ymax": vertical[1],
-                            "uniform": false })
+        currentPlotSpec = spec
+        var vertical = padBounds(result.minY, result.maxY)
+        storePaths(result.paths, { "xmin": -10.0, "xmax": 10.0,
+                                   "ymin": vertical[0], "ymax": vertical[1],
+                                   "uniform": false })
     }
 
     function computeParametric(spec) {
@@ -349,11 +480,40 @@ Item {
             return
         }
 
+        // 断点处相邻点距离会突然拉大（如 tan(t) 的极点），按视域尺度切段
+        var span = Math.max(maxX - minX, maxY - minY)
+        var jump = Math.max(1e-6, span * 0.1)
+        var paths = []
+        var current = []
+
+        for (var p = 0; p < points.length; ++p) {
+            var point = points[p]
+            if (current.length > 0) {
+                var previous = current[current.length - 1]
+                var deltaX = point[0] - previous[0]
+                var deltaY = point[1] - previous[1]
+                if (Math.sqrt(deltaX * deltaX + deltaY * deltaY) > jump) {
+                    if (current.length > 1)
+                        paths.push(current)
+                    current = []
+                }
+            }
+            current.push(point)
+        }
+        if (current.length > 1)
+            paths.push(current)
+
+        if (paths.length === 0) {
+            plotError = "这个参数方程没有可绘制的点"
+            return
+        }
+
+        currentPlotSpec = spec
         var horizontal = padBounds(minX, maxX)
         var vertical = padBounds(minY, maxY)
-        storePaths([points], { "xmin": horizontal[0], "xmax": horizontal[1],
-                               "ymin": vertical[0], "ymax": vertical[1],
-                               "uniform": true })
+        storePaths(paths, { "xmin": horizontal[0], "xmax": horizontal[1],
+                            "ymin": vertical[0], "ymax": vertical[1],
+                            "uniform": true })
     }
 
     function computeImplicit(spec) {
@@ -556,6 +716,13 @@ Item {
         to: 1.0
         duration: 1600
         easing.type: Easing.InOutSine
+    }
+
+    // 缩放/平移结束后再按视域重采样，避免拖拽过程中每帧重算
+    Timer {
+        id: resampleTimer
+        interval: 180
+        onTriggered: page.resampleForView()
     }
 
     Item {
@@ -1041,7 +1208,7 @@ Item {
                             if (!page.hasPlot || width <= 0 || height <= 0)
                                 return
 
-                            var bounds = page.plotBounds
+                            var bounds = page.viewBounds
                             var spanX = bounds.xmax - bounds.xmin
                             var spanY = bounds.ymax - bounds.ymin
                             if (spanX <= 0 || spanY <= 0)
@@ -1163,6 +1330,50 @@ Item {
                         }
                     }
 
+                    MouseArea {
+                        id: plotGesture
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+
+                        property point lastPoint
+                        property bool panning: false
+
+                        onPressed: function(mouse) {
+                            lastPoint = Qt.point(mouse.x, mouse.y)
+                            panning = true
+                            page.finishGrowth()
+                        }
+
+                        onPositionChanged: function(mouse) {
+                            if (!pressed || !page.hasPlot)
+                                return
+                            page.panView(lastPoint.x - mouse.x, lastPoint.y - mouse.y,
+                                         width, height)
+                            lastPoint = Qt.point(mouse.x, mouse.y)
+                            plotCanvas.requestPaint()
+                        }
+
+                        onReleased: {
+                            if (panning)
+                                resampleTimer.restart()
+                            panning = false
+                        }
+
+                        onDoubleClicked: page.resetView()
+
+                        onWheel: function(wheel) {
+                            if (!page.hasPlot)
+                                return
+                            var ax = wheel.x / Math.max(1, width)
+                            var ay = wheel.y / Math.max(1, height)
+                            page.finishGrowth()
+                            page.zoomView(wheel.angleDelta.y > 0 ? 1.2 : 1 / 1.2, ax, ay)
+                            resampleTimer.restart()
+                            plotCanvas.requestPaint()
+                        }
+                    }
+
                     Text {
                         anchors.centerIn: parent
                         visible: !page.hasPlot
@@ -1185,12 +1396,22 @@ Item {
                         Text {
                             id: legendText
                             anchors.centerIn: parent
-                            text: "x ∈ [" + page.plotBounds.xmin.toFixed(1) + ", "
-                                  + page.plotBounds.xmax.toFixed(1) + "]"
+                            text: "x ∈ [" + page.viewBounds.xmin.toFixed(1) + ", "
+                                  + page.viewBounds.xmax.toFixed(1) + "]"
                             color: Theme.textTertiary
                             font.family: Theme.fontFamily
                             font.pixelSize: 10
                         }
+                    }
+
+                    ToolAction {
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: 12
+                        width: 96
+                        height: 32
+                        text: "重置视图"
+                        onClicked: page.resetView()
                     }
                 }
             }
