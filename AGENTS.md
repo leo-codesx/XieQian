@@ -18,16 +18,16 @@
 | 目录 | QML 在 `ui/qml/`（不是 `ui/`）；UI C++ 在 `src/ui/`，入口 `src/ui/main.cpp`；core 在 `src/core` + `include/xieqian` |
 | QML 注册 | 无 `qt_add_qml_module`；`ui/qml.qrc`（prefix `/ui`）+ `qmldir`（仅 `singleton Theme 1.0`）。新增 QML 必须同轮登记 qrc |
 | Theme | `ui/qml/Theme.qml` 已存在，token 名沿用，禁止重命名；旧值改注释保留 |
-| 组件 | `IosSwitch` 已存在（自绘）；`PageHeader/GroupedList/ListRow/PrimaryButton` 由 R1 新增 |
+| 组件 | `IosSwitch`；R1 新增 `PageHeader/GroupedList/ListRow/PrimaryButton`；R7/R9/R3.1 新增 `MathKeypad/CountdownTab/DiagnosisDialog` |
 | 存储 | SQLite 单文件 `data.db`，WAL + synchronous=FULL + busy_timeout；schema 用 `PRAGMA user_version`（当前 2）；启动后台 `quick_check`（独立连接，主线程最多等 200ms）；损坏时 `wal_checkpoint(TRUNCATE)` + 三件套同时间戳改名 `data_corrupted_<ts>.db`；`user_version` 事务化迁移；数据目录回退链 DataPath → AppData → Home → Temp |
-| 缺失 | 单实例激活通道（`QLocalServer/QLocalSocket`）；倒计时工具；数学键盘；函数图像缩放平移 |
-| 单实例 | 只有 `QLockFile` + 「已在运行」弹窗；`QLocalServer/QLocalSocket` 缺失 |
+| 已知限制 | 阶跃函数（floor/ceil/round）跳变阈值法漏断；极陡连续曲线放大后可能误断；`e` 条件退格依赖字符判断；`ToolSegment` 260 宽度容纳 3 标签偏紧 |
+| 单实例 | `QLockFile` + `QLocalServer/QLocalSocket` 激活通道；次实例唤醒主窗口后静默退出；陈旧锁仅在持有者进程已死时接管；Windows 用 `SW_RESTORE` + `SetForegroundWindow` 兜底 |
 | AI | DeepSeek，零信任（源码与安装包无内置 Key），强制 HTTPS（本机除外），备份不含 Key |
-| AI 网络 | `QNetworkInformation` 可达性拦截（仅 Online 放行；Unknown 拦截待 R3.1 改为放行）、`setTransferTimeout`、错误分类（NET_DNS/NET_CONNECT/NET_TIMEOUT/NET_SSL/API_*）与脱敏诊断（`lastDiagnostic`）；无防重入 |
-| 分数 | 仅 JS（`ui/qml/components/ExpressionParser.js` 的 gcd/makeFraction/decimalToFraction/formatResult），显示为单行 `5/6 ≈ 0.833`，分母上限 100000 |
-| 函数图像 | `plotPaths` 已是分段结构、逐段 moveTo；无数学键盘、无缩放平移 |
+| AI 网络 | `QNetworkInformation` 可达性拦截（Online/Unknown 放行，Disconnected/Local/Site 拦截；后端不可用降级放行）、`setTransferTimeout`、错误分类（NET_DNS/NET_CONNECT/NET_TIMEOUT/NET_SSL/API_*）与脱敏诊断（`lastDiagnostic`）；`isRequesting_` 防重入；失败发 `diagnosisRequested` 弹诊断窗 |
+| 分数 | 仅 JS（`ExpressionParser.js` 的 gcd/makeFraction/decimalToFraction/formatResult），主行分数 + 副行 6 位近似，分母上限 100000 |
+| 函数图像 | `plotPaths` 为分段数组，跳变阈值切段；缩放/拖拽/双击复位；`MathKeypad` 数学键盘；显式模式选择只影响变量键与提示，不改变文本解析 |
 | 权重 | 唯一公式 `core::dynamicWeight`（`roster.cpp`）：`base * exp(-drawCount/3) * max(0.1, 1-streak*0.2)`；`weightsVersion` 不存在 |
-| 版本点 | 5 处：`CMakeLists.txt`、`src/ui/main.cpp`、`installer.iss`、`ui/qml/pages/AboutPage.qml` 两处硬编码 |
+| 版本点 | 3 处硬编码：`CMakeLists.txt`、`src/ui/main.cpp`、`installer.iss`；AboutPage 读 `Qt.application.version` 运行时版本 |
 | CI | `windows-latest`，`push main`/`pull_request main`/`tags v*`；Qt 6.8.3 + Catch2 v3.16.1 → CMake Release → ctest → windeployqt → Inno Setup |
 | 署名 | README 版权与徽章指向 IoveXCM520，remote 是 leo-codesx；R11 前不得擅自改 |
 
@@ -90,10 +90,6 @@ CI_WATCH: <需重点看的测试/编译单元>
 
 ## 2. 进度
 
-- R0 完成：14 条事实修正已采纳。
-- R1 完成：Theme 改值（radiusCard 16、radiusControl 10、fontLargeTitle 32）、新增 PageHeader/GroupedList/ListRow/PrimaryButton、IosSwitch 弹簧、SettingsPage 与 AddPage 接入。
-- R2 完成：`maskBase` 与 `textPrimary` 分离（27 处遮罩替换）、剩余页面标题收口、RosterPage 单卡列表、硬编码色清零。
-- R3 完成：AI 网络可达性拦截、transferTimeout、错误分类与脱敏诊断（提交 0448e32）。
-- R4 完成：启动 quick_check、损坏恢复、user_version 事务迁移、数据目录回退链、存储测试。
-- 下一步 R3.1：Unknown 改为放行、超时文案改「30 秒无响应」、postChat 防重入、诊断弹窗 QML。
-- 之后 R5：单实例激活。
+- R0–R11 全部完成（含 R3.1）：设计 token、网络强校验、存储恢复、单实例、计算器、数学键盘、分段渲染/缩放、倒计时、权重与发布准备。
+- 当前版本 1.2.5；R10（`c674747`）与 R11（`320886c`）已提交，**未推送、未打 tag**。
+- 发布阻塞项：README 署名（IoveXCM520 vs remote leo-codesx）需明确处置；tag `v1.2.5` 会触发自动 Release。
