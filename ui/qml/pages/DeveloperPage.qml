@@ -267,6 +267,66 @@ Item {
                     }
                 }
             }
+
+            // 数据文件：只读展示实际生效路径与存储模式
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 92
+                radius: Theme.radiusCard
+                color: Theme.surface
+
+                CardShadow {}
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.cardPadding
+                    anchors.rightMargin: Theme.cardPadding
+                    spacing: 12
+
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Text {
+                            text: backendBridge.storageReady
+                                  ? "数据文件（可读写）" : "数据文件（只读/内存模式）"
+                            color: Theme.textPrimary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontBody
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: backendBridge.databasePath.length > 0
+                                  ? backendBridge.databasePath : "（尚未确定）"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontMicro
+                            elide: Text.ElideMiddle
+                        }
+
+                        TextEdit {
+                            id: databasePathClipboard
+                            width: 1
+                            height: 1
+                            opacity: 0
+                            text: backendBridge.databasePath
+                        }
+                    }
+
+                    DevButton {
+                        Layout.alignment: Qt.AlignVCenter
+                        width: 88
+                        height: 36
+                        text: "复制路径"
+                        onClicked: {
+                            databasePathClipboard.selectAll()
+                            databasePathClipboard.copy()
+                            databasePathClipboard.deselect()
+                        }
+                    }
+                }
+            }
         }
 
         ListView {

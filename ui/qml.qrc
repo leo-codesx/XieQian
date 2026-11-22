@@ -35,6 +35,7 @@
         <file>qml/components/PrimaryButton.qml</file>
         <file>qml/components/DiagnosisDialog.qml</file>
         <file>qml/components/MathKeypad.qml</file>
+        <file>qml/components/CountdownTab.qml</file>
         <file>qml/components/DrawSettingsDialog.qml</file>
         <file>qml/components/AiKeyDialog.qml</file>
 

@@ -34,6 +34,10 @@ ApplicationWindow {
     // 首次启动欢迎弹窗：启动页淡出后再弹出
     property bool welcomeRequested: false
 
+    // ─── 存储提示（写失败 / 只读模式）───
+    property string storageNotice: ""
+    property double storageNoticeAt: 0
+
     Component.onCompleted: welcomeRequested = backendBridge.isFirstRun()
 
     readonly property bool reducedMotion: {
@@ -785,6 +789,63 @@ ApplicationWindow {
 
         anchors.fill: windowPanel
         z: 99000
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // 存储提示：写失败与只读模式各提示一次，5 秒内不重复
+    // ═════════════════════════════════════════════════════════════
+    Rectangle {
+        id: storageNoticeBar
+
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 24
+        width: Math.min(560, parent.width - 48)
+        height: storageNoticeText.implicitHeight + 20
+        radius: Theme.radiusControl
+        color: Theme.dangerSoft
+        visible: window.storageNotice.length > 0
+        z: 98900
+
+        Text {
+            id: storageNoticeText
+            anchors.fill: parent
+            anchors.margins: 10
+            text: window.storageNotice
+            color: Theme.danger
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fontCaption
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+
+    Timer {
+        id: storageNoticeTimer
+        interval: 6000
+        onTriggered: window.storageNotice = ""
+    }
+
+    Connections {
+        target: backendBridge
+
+        function onStorageWriteFailed(reason) {
+            var now = Date.now()
+            if (now - window.storageNoticeAt < 5000)
+                return
+            window.storageNoticeAt = now
+            window.storageNotice = "数据保存失败，本次改动可能没有写入磁盘"
+            storageNoticeTimer.restart()
+        }
+
+        function onStorageReadyChanged() {
+            if (!backendBridge.storageReady && backendBridge.storageError.length > 0) {
+                window.storageNoticeAt = Date.now()
+                window.storageNotice = "当前处于只读/内存模式：" + backendBridge.storageError
+                storageNoticeTimer.restart()
+            }
+        }
     }
 
     // ═════════════════════════════════════════════════════════════
