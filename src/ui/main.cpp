@@ -1,6 +1,9 @@
 #include <QApplication>
 #include <QDir>
+#include <QHashFunctions>
 #include <QIcon>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QLockFile>
 #include <QMessageBox>
 #include <QQmlApplicationEngine>
@@ -203,6 +206,63 @@ private:
 };
 #endif
 
+QString singleInstanceKey()
+{
+    // 安装路径 + 用户目录共同参与哈希：多副本、多用户之间互不干扰
+    const QString seed = QCoreApplication::applicationFilePath() + QLatin1Char('|')
+                         + QDir::homePath();
+    return QStringLiteral("XieQian.singleinstance.%1")
+        .arg(QString::number(static_cast<qulonglong>(qHash(seed)), 16));
+}
+
+// 通知已运行的主实例把窗口拉到前台；连不上返回 false，由调用方判断陈旧锁
+bool notifyExistingInstance(const QString &key)
+{
+    QLocalSocket socket;
+    socket.connectToServer(key);
+    if (!socket.waitForConnected(1000)) {
+        return false;
+    }
+
+    socket.write("ACTIVATE");
+    socket.flush();
+    (void)socket.waitForBytesWritten(1000);
+    socket.disconnectFromServer();
+    if (socket.state() != QLocalSocket::UnconnectedState) {
+        (void)socket.waitForDisconnected(200);
+    }
+    return true;
+}
+
+void activateMainWindow(QQuickWindow *window)
+{
+    if (window == nullptr) {
+        return;
+    }
+
+    if (window->visibility() == QWindow::Hidden || window->visibility() == QWindow::Minimized) {
+        window->showNormal();
+    } else {
+        window->show();
+    }
+    window->raise();
+    window->requestActivate();
+
+#ifdef Q_OS_WIN
+    HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd == nullptr) {
+        // 兜底：按 QML 里的窗口标题找（当前无翻译资源，标题固定）
+        hwnd = FindWindowW(L"撷签 · 课堂抽签", nullptr);
+    }
+    if (hwnd != nullptr) {
+        if (IsIconic(hwnd) == TRUE) {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        SetForegroundWindow(hwnd);
+    }
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char *argv[])
@@ -213,16 +273,21 @@ int main(int argc, char *argv[])
     // 任务栏与窗口图标：rc 资源负责 exe 图标，这里保证运行时窗口也用同一枚图标
     app.setWindowIcon(QIcon(QStringLiteral(":/ui/assets/app-icon-512.png")));
 
-    // 单实例锁：两个进程同时写 SQLite 会互相覆盖状态，直接拦在启动阶段。
-    // 锁文件放在临时目录，进程异常退出时 QLockFile 会按 PID 判定并自动回收。
+    // 单实例锁 + 激活通道：两个进程同时写 SQLite 会互相覆盖状态；
+    // 已有实例时唤醒它的窗口再退出，而不是只弹“已在运行”。
+    const QString instanceKey = singleInstanceKey();
     const QString lockPath = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
                                  .filePath(QStringLiteral("XieQian.lock"));
     QLockFile lockFile(lockPath);
     lockFile.setStaleLockTime(0);
     if (!lockFile.tryLock(150)) {
-        QMessageBox::information(nullptr, QStringLiteral("撷签"),
-                                 QStringLiteral("撷签已经在运行中，请勿重复启动。"));
-        return 0;
+        if (notifyExistingInstance(instanceKey)) {
+            return 0;
+        }
+        // 唤醒失败：只有锁确实陈旧（持有者进程已死）才接管，避免破坏互斥
+        if (!lockFile.removeStaleLockFile() || !lockFile.tryLock(500)) {
+            return 0;
+        }
     }
 
     BackendBridge backendBridge;
@@ -235,6 +300,38 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     // QML 所有页面都通过 backendBridge 访问后端；缺这条注册会让按钮点击后全部无响应
     engine.rootContext()->setContextProperty(QStringLiteral("backendBridge"), &backendBridge);
+
+    // 单实例激活通道：次实例通过 QLocalSocket 唤醒这里，避免“已在运行却找不到窗口”
+    QLocalServer activationServer;
+    activationServer.setSocketOptions(QLocalServer::UserAccessOption);
+    if (!activationServer.listen(instanceKey)) {
+        // 上次进程异常退出可能残留同名 server，清理后重试一次
+        QLocalServer::removeServer(instanceKey);
+        if (!activationServer.listen(instanceKey)) {
+            qWarning().noquote() << "[LIFE] activation server unavailable:"
+                                 << activationServer.errorString();
+        }
+    }
+    QObject::connect(&activationServer, &QLocalServer::newConnection, &activationServer,
+                     [&activationServer, &engine]() {
+                         while (QLocalSocket *socket = activationServer.nextPendingConnection()) {
+                             QObject::connect(socket, &QLocalSocket::readyRead, socket,
+                                              [socket, &engine]() {
+                                                  const QByteArray message = socket->readAll();
+                                                  if (message.startsWith("ACTIVATE")) {
+                                                      QQuickWindow *window = nullptr;
+                                                      if (!engine.rootObjects().isEmpty()) {
+                                                          window = qobject_cast<QQuickWindow *>(
+                                                              engine.rootObjects().constFirst());
+                                                      }
+                                                      activateMainWindow(window);
+                                                  }
+                                                  socket->disconnectFromServer();
+                                              });
+                             QObject::connect(socket, &QLocalSocket::disconnected, socket,
+                                              &QLocalSocket::deleteLater);
+                         }
+                     });
 
     engine.load(QUrl(QStringLiteral("qrc:/ui/qml/Main.qml")));
 
