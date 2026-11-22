@@ -79,6 +79,8 @@ signals:
     void functionGenerated(const QString &expression);
     void functionFailed(const QString &message);
     void lastDiagnosticChanged();
+    // 网络/接口类失败时通知上层弹诊断窗；未配置 Key 等本地错误不发
+    void diagnosisRequested(const QString &message);
 
 private:
     enum class RequestKind { AwardSpeech, FunctionExpression };
@@ -117,6 +119,7 @@ private:
     std::unique_ptr<QNetworkAccessManager> network_;
     QNetworkInformation::Reachability reachability_ = QNetworkInformation::Reachability::Unknown;
     QString lastDiagnostic_;
+    bool isRequesting_ = false;
     QString apiKey_;
     QString baseUrl_;
     QString model_;

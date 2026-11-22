@@ -216,7 +216,7 @@ QString errorKindName(AiErrorKind kind)
 
 QString timeoutMessage(int timeoutMs)
 {
-    return QStringLiteral("请求超时（%1s），请稍后重试").arg(qMax(1, timeoutMs / 1000));
+    return QStringLiteral("请求超时（%1 秒无响应），请稍后重试").arg(qMax(1, timeoutMs / 1000));
 }
 
 }  // namespace
@@ -252,7 +252,18 @@ bool AiManager::networkAvailable() const
     if (networkInformation() == nullptr) {
         return true;
     }
-    return reachability_ == QNetworkInformation::Reachability::Online;
+
+    switch (reachability_) {
+    case QNetworkInformation::Reachability::Online:
+    case QNetworkInformation::Reachability::Unknown:
+        // Unknown 的语义是“无法判定”，乐观放行；真实失败由 NET_DNS/NET_CONNECT 兜底
+        return true;
+    case QNetworkInformation::Reachability::Disconnected:
+    case QNetworkInformation::Reachability::Local:
+    case QNetworkInformation::Reachability::Site:
+        return false;
+    }
+    return true;
 }
 
 QString AiManager::lastDiagnostic() const
@@ -467,6 +478,13 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
 {
     const QUrl requestUrl(endpoint);
 
+    // 单例请求闸门：避免连点造成并发计费；QML 调用与 finished 回调都在主线程
+    if (isRequesting_) {
+        AiErrorInfo info = localFailure(AiErrorKind::Other, QStringLiteral("请求进行中，请稍候"));
+        handler(false, QString(), info);
+        return;
+    }
+
     // 所有 AI 请求都经这里：断网时直接拦下，不发任何请求
     if (!networkAvailable()) {
         AiErrorInfo info = localFailure(AiErrorKind::NoNetwork,
@@ -476,6 +494,7 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
         qWarning().noquote() << "[NET] blocked | reason=no_network | reachability="
                              << reachabilityName(reachability_);
         rememberDiagnostic(info);
+        emit diagnosisRequested(info.userMessage);
         handler(false, QString(), info);
         return;
     }
@@ -489,6 +508,7 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
     QElapsedTimer elapsed;
     elapsed.start();
 
+    isRequesting_ = true;
     QNetworkReply *reply =
         network_->post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
 
@@ -496,6 +516,7 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
             [this, reply, handler = std::move(handler), requestUrl, timeoutMs, elapsed]() {
                 const QByteArray body = reply->readAll();
                 reply->deleteLater();
+                isRequesting_ = false;
 
                 if (reply->error() != QNetworkReply::NoError) {
                     const AiErrorInfo info =
@@ -503,8 +524,17 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
                     qWarning().noquote() << "[NET] request failed | kind="
                                          << errorKindName(info.kind)
                                          << "| url=" << sanitizedUrl(requestUrl)
-                                         << "| elapsed=" << elapsed.elapsed() << "ms";
+                                         << "| elapsed=" << elapsed.elapsed() << "ms"
+                                         << "| reachability=" << reachabilityName(reachability_);
+                    // 分类与可达性矛盾时单独打点，便于排查 Windows NLM 行为
+                    if ((info.kind == AiErrorKind::Dns || info.kind == AiErrorKind::Connect)
+                        && reachability_ == QNetworkInformation::Reachability::Online) {
+                        qWarning().noquote() << "[NET] mismatch | classified="
+                                             << errorKindName(info.kind)
+                                             << "| reachability=Online";
+                    }
                     rememberDiagnostic(info);
+                    emit diagnosisRequested(info.userMessage);
                     handler(false, QString(), info);
                     return;
                 }
@@ -522,6 +552,7 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
                                           .arg(maskedBody(body));
                     qWarning().noquote() << "[NET] parse failed | url=" << sanitizedUrl(requestUrl);
                     rememberDiagnostic(info);
+                    emit diagnosisRequested(info.userMessage);
                     handler(false, QString(), info);
                     return;
                 }
@@ -539,6 +570,7 @@ void AiManager::postChat(const QJsonObject &payload, const QString &key, const Q
                     info.diagnostic = QStringLiteral("kind=API_PARSE\nhttp=200\nbody=%1")
                                           .arg(maskedBody(body));
                     rememberDiagnostic(info);
+                    emit diagnosisRequested(info.userMessage);
                     handler(false, QString(), info);
                     return;
                 }

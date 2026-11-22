@@ -788,6 +788,24 @@ ApplicationWindow {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // AI 请求诊断弹窗：NET_* / API_* 失败时由 AiManager 通知
+    // ═════════════════════════════════════════════════════════════
+    DiagnosisDialog {
+        id: diagnosisDialog
+
+        anchors.fill: windowPanel
+        z: 99500
+    }
+
+    Connections {
+        target: backendBridge.aiManager
+
+        function onDiagnosisRequested(message) {
+            diagnosisDialog.openWith(message)
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // 侧栏图标
     // ═════════════════════════════════════════════════════════════
     component NavIcon: Canvas {
