@@ -58,26 +58,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "历史"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "每一次选择，都值得被记住"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "历史"
+                subtitle: "每一次选择，都值得被记住"
             }
 
             Row {
@@ -192,7 +182,7 @@ Item {
                 color: Theme.surface
                 // 去掉列表项的 MultiEffect 阴影：改为 1px 描边，滚动更轻
                 border.width: 1
-                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
+                border.color: Theme.withAlpha(Theme.maskBase, 0.05)
 
                 MouseArea {
                     id: cardMouse
@@ -335,7 +325,7 @@ Item {
                                 ctx.arc(cx, cy, 64, 0, pi2)
                                 ctx.fill()
 
-                                ctx.strokeStyle = "#D7DCE4"
+                                ctx.strokeStyle = String(Theme.borderStrong)
                                 ctx.lineWidth = 1.8
                                 ctx.lineCap = "round"
                                 ctx.beginPath()
@@ -345,7 +335,8 @@ Item {
                                 for (var i = 0; i < 12; ++i) {
                                     var a = i * Math.PI / 6
                                     var inner = (i % 3 === 0) ? radius - 8 : radius - 4
-                                    ctx.strokeStyle = (i % 3 === 0) ? "#C4CBD6" : "#E2E6EC"
+                                    ctx.strokeStyle = (i % 3 === 0) ? String(Theme.borderStrong)
+                                                                    : String(Theme.border)
                                     ctx.lineWidth = (i % 3 === 0) ? 1.6 : 1
                                     ctx.beginPath()
                                     ctx.moveTo(cx + Math.cos(a) * inner,
@@ -355,7 +346,7 @@ Item {
                                     ctx.stroke()
                                 }
 
-                                ctx.strokeStyle = "#8FBBF8"
+                                ctx.strokeStyle = String(Theme.withAlpha(Theme.primary, 0.55))
                                 ctx.lineWidth = 3
                                 ctx.beginPath()
                                 ctx.moveTo(cx, cy)
@@ -366,7 +357,7 @@ Item {
 
                                 ctx.beginPath()
                                 ctx.arc(cx, cy, 3.2, 0, pi2)
-                                ctx.fillStyle = "#3B8BF6"
+                                ctx.fillStyle = String(Theme.primary)
                                 ctx.fill()
                             }
                         }
@@ -414,7 +405,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.18)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.18)
                 shadowBlur: 0.65
                 shadowVerticalOffset: 12
                 shadowHorizontalOffset: 0

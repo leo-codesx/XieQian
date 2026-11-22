@@ -556,26 +556,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "工具"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "算一算，画一画，随手可用"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "工具"
+                subtitle: "算一算，画一画，随手可用"
             }
 
             ToolSegment {
@@ -622,29 +612,14 @@ Item {
                     }
 
                     // 计算器整体放在一张独立白色圆角卡片上，与浅灰页面背景分层
-                    Item {
+                    GroupedList {
                         id: calcSheet
 
                         width: Math.min(460, calcFlick.width - 16)
-                        height: calcColumn.height + 40
                         x: (calcFlick.width - width) / 2
                         y: 16
-
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 24
-                            color: Theme.surface
-
-                            CardShadow {}
-                        }
-
-                        Column {
-                            id: calcColumn
-
-                            x: 20
-                            y: 20
-                            width: parent.width - 40
-                            spacing: 12
+                        padding: 20
+                        spacing: 12
 
                         // 显示屏
                         Rectangle {
@@ -734,7 +709,6 @@ Item {
                             }
                         }
                     }
-                    }
                 }
             }
 
@@ -814,7 +788,7 @@ Item {
                                     border.width: 1
                                     border.color: plotField.activeFocus
                                                   ? Theme.primary
-                                                  : Theme.withAlpha(Theme.textPrimary, 0.06)
+                                                  : Theme.withAlpha(Theme.maskBase, 0.06)
                                 }
 
                                 onTextChanged: page.plotText = text
@@ -889,7 +863,7 @@ Item {
                                         color: presetMouse.containsMouse
                                                ? Theme.primarySoft : Theme.surfaceAlt
                                         border.width: 1
-                                        border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
+                                        border.color: Theme.withAlpha(Theme.maskBase, 0.05)
 
                                         Text {
                                             id: presetLabel
@@ -914,7 +888,7 @@ Item {
                             Rectangle {
                                 width: parent.width
                                 height: 1
-                                color: Theme.withAlpha(Theme.textPrimary, 0.06)
+                                color: Theme.withAlpha(Theme.maskBase, 0.06)
                             }
 
                             Text {
@@ -945,7 +919,7 @@ Item {
                                     border.width: 1
                                     border.color: aiField.activeFocus
                                                   ? Theme.primary
-                                                  : Theme.withAlpha(Theme.textPrimary, 0.06)
+                                                  : Theme.withAlpha(Theme.maskBase, 0.06)
                                 }
 
                                 onTextChanged: page.aiPrompt = text
@@ -1056,7 +1030,7 @@ Item {
                                 step *= 2
 
                             ctx.lineWidth = 1
-                            ctx.strokeStyle = "#EEF1F4"
+                            ctx.strokeStyle = String(Theme.divider)
                             ctx.beginPath()
                             var startX = Math.ceil(bounds.xmin / step) * step
                             for (var gx = startX; gx <= bounds.xmax; gx += step) {
@@ -1073,7 +1047,7 @@ Item {
                             ctx.stroke()
 
                             // 坐标轴
-                            ctx.strokeStyle = "#CAD0D8"
+                            ctx.strokeStyle = String(Theme.borderStrong)
                             ctx.lineWidth = 1.2
                             ctx.beginPath()
                             if (bounds.xmin <= 0 && bounds.xmax >= 0) {
@@ -1201,7 +1175,7 @@ Item {
             radius: height / 2
             color: Theme.surfaceAlt
             border.width: 1
-            border.color: Theme.withAlpha(Theme.textPrimary, 0.035)
+            border.color: Theme.withAlpha(Theme.maskBase, 0.035)
         }
 
         Rectangle {
@@ -1324,7 +1298,7 @@ Item {
             border.width: 1
             border.color: key.accent
                           ? Theme.withAlpha(Theme.primary, 0.22)
-                          : Theme.withAlpha(Theme.textPrimary, 0.06)
+                          : Theme.withAlpha(Theme.maskBase, 0.06)
 
             Behavior on color {
                 ColorAnimation {

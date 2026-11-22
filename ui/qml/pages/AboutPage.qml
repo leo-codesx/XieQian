@@ -29,26 +29,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "关于"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "一款为课堂而生的抽签工具"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "关于"
+                subtitle: "一款为课堂而生的抽签工具"
             }
         }
 

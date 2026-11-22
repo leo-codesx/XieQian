@@ -410,7 +410,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.22)
                 shadowBlur: 0.7
                 shadowVerticalOffset: 16
                 shadowHorizontalOffset: 0
@@ -546,7 +546,7 @@ Item {
         width: Math.min(page.width - 48, toastText.implicitWidth + 40)
         height: 40
         radius: 20
-        color: Theme.withAlpha(Theme.textPrimary, 0.9)
+        color: Theme.withAlpha(Theme.maskBase, 0.9)
         opacity: 0.0
         visible: opacity > 0
         z: 100
@@ -612,7 +612,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.22)
                 shadowBlur: 0.7
                 shadowVerticalOffset: 16
                 shadowHorizontalOffset: 0
@@ -720,7 +720,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.22)
                 shadowBlur: 0.7
                 shadowVerticalOffset: 16
                 shadowHorizontalOffset: 0
@@ -803,7 +803,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.22)
                 shadowBlur: 0.7
                 shadowVerticalOffset: 16
                 shadowHorizontalOffset: 0

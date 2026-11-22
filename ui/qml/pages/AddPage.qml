@@ -1001,7 +1001,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.18)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.18)
                 shadowBlur: 0.65
                 shadowVerticalOffset: 12
                 shadowHorizontalOffset: 0
@@ -1041,7 +1041,7 @@ Item {
                 border.width: 1
                 border.color: rosterDialog.addToRoster
                               ? Theme.withAlpha(Theme.primary, 0.32)
-                              : Theme.withAlpha(Theme.textPrimary, 0.05)
+                              : Theme.withAlpha(Theme.maskBase, 0.05)
 
                 Row {
                     anchors.left: parent.left
@@ -1057,7 +1057,7 @@ Item {
                         border.width: 1
                         border.color: rosterDialog.addToRoster
                                       ? Theme.primary
-                                      : Theme.withAlpha(Theme.textPrimary, 0.18)
+                                      : Theme.withAlpha(Theme.maskBase, 0.18)
 
                         Text {
                             anchors.centerIn: parent
@@ -1442,7 +1442,7 @@ Item {
             anchors.centerIn: parent
             color: Theme.surface
             border.width: 1
-            border.color: Theme.withAlpha(Theme.textPrimary, 0.06)
+            border.color: Theme.withAlpha(Theme.maskBase, 0.06)
 
             layer.enabled: true
             layer.effect: MultiEffect {

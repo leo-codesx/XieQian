@@ -136,7 +136,7 @@ ApplicationWindow {
         radius: window.maximized ? 0 : Theme.radiusWindow
         color: Theme.background
         border.width: window.maximized ? 0 : 1
-        border.color: Theme.withAlpha(Theme.textPrimary, 0.06)
+        border.color: Theme.withAlpha(Theme.maskBase, 0.06)
         clip: true
 
         // 最大化时立即变直角，不要有过渡动画，避免四角瞬间露出桌面

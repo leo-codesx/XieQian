@@ -10,10 +10,12 @@ Item {
     id: root
 
     property int cornerRadius: Theme.radiusCard
+    property int padding: 0
+    property alias spacing: contentColumn.spacing
     default property alias contentData: contentColumn.data
 
     width: parent ? parent.width : 0
-    implicitHeight: contentColumn.implicitHeight
+    implicitHeight: contentColumn.implicitHeight + padding * 2
     height: implicitHeight
 
     Rectangle {
@@ -26,6 +28,8 @@ Item {
 
     Column {
         id: contentColumn
-        width: parent.width
+        x: root.padding
+        y: root.padding
+        width: parent.width - root.padding * 2
     }
 }

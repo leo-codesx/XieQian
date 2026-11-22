@@ -293,7 +293,7 @@ Item {
         target: card
         shadowBlur: 0.75
         shadowOffsetY: 18
-        shadowColor: Theme.withAlpha(Theme.textPrimary, 0.22)
+        shadowColor: Theme.withAlpha(Theme.maskBase, 0.22)
     }
 
     // 贺卡

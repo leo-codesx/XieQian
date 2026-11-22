@@ -135,26 +135,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "开发者控制台"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "权重调校 · 成绩单调权 · 状态重置"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "开发者控制台"
+                subtitle: "权重调校 · 成绩单调权 · 状态重置"
             }
 
             Text {
@@ -305,7 +295,7 @@ Item {
                 radius: Theme.radiusListCard
                 color: Theme.surface
                 border.width: 1
-                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
+                border.color: Theme.withAlpha(Theme.maskBase, 0.05)
                 opacity: modelData.enabled ? 1.0 : 0.6
 
                 RowLayout {

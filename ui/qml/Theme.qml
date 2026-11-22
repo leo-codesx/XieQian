@@ -45,7 +45,9 @@ QtObject {
     readonly property color surfacePressed: "#EBEBF0"
     readonly property color fill: "#F2F2F7"
 
-    readonly property color textPrimary: "#000000"
+    // 遮罩/阴影/半透明底色与文本色分开：maskBase 保持纯黑，textPrimary 用 iOS 柔和黑
+    readonly property color maskBase: "#000000"
+    readonly property color textPrimary: "#1C1C1E" // v1.2.3: #000000
     readonly property color textSecondary: "#6E6E73"
     readonly property color textTertiary: "#8E8E93"
     readonly property color textInverse: "#FFFFFF"

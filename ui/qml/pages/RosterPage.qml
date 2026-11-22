@@ -117,26 +117,16 @@ Item {
             anchors.right: parent.right
             height: 76
 
-            Column {
+            PageHeader {
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 12
-                spacing: 2
-
-                Text {
-                    text: "名单"
-                    color: Theme.textPrimary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontLargeTitle
-                    font.weight: Font.Bold
-                }
-
-                Text {
-                    text: "左侧开关决定谁参与这一轮"
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontBody
-                }
+                horizontalPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                title: "名单"
+                subtitle: "左侧开关决定谁参与这一轮"
             }
 
             Row {
@@ -158,7 +148,7 @@ Item {
                     radius: 16
                     color: Theme.surface
                     border.width: 1
-                    border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
+                    border.color: Theme.withAlpha(Theme.maskBase, 0.05)
 
                     RowLayout {
                         id: countRow
@@ -189,6 +179,15 @@ Item {
         // ─────────────────────────────────────────────────────────
         // 名单列表
         // ─────────────────────────────────────────────────────────
+        GroupedList {
+            id: listCard
+
+            x: listView.x
+            y: listView.y
+            width: listView.width
+            height: listView.count === 0 ? 0 : Math.min(listView.height, listView.contentHeight)
+        }
+
         ListView {
             id: listView
 
@@ -197,7 +196,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             clip: true
-            spacing: 8
+            spacing: 0
             cacheBuffer: 2000
             boundsBehavior: Flickable.StopAtBounds
             model: page.participants
@@ -206,37 +205,18 @@ Item {
                 policy: ScrollBar.AlwaysOff
             }
 
-            delegate: Rectangle {
+            delegate: ListRow {
                 id: card
 
-                width: ListView.view ? ListView.view.width : 0
                 height: 72
-                radius: Theme.radiusListCard
-                color: Theme.surface
-                // 列表项不再叠 MultiEffect 阴影：每项一层 FBO 在中低端机器上非常昂贵
-                border.width: 1
-                border.color: Theme.withAlpha(Theme.textPrimary, 0.05)
+                first: index === 0
                 opacity: modelData.enabled ? 1.0 : 0.55
-                scale: cardMouse.containsMouse ? 1.002 : 1.0
 
                 Behavior on opacity {
                     NumberAnimation {
                         duration: Theme.durationNormal
                         easing.type: Easing.OutCubic
                     }
-                }
-
-                Behavior on scale {
-                    NumberAnimation {
-                        duration: Theme.durationFast
-                        easing.type: Easing.OutCubic
-                    }
-                }
-
-                MouseArea {
-                    id: cardMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
                 }
 
                 RowLayout {
@@ -438,7 +418,7 @@ Item {
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: Theme.withAlpha(Theme.textPrimary, 0.18)
+                shadowColor: Theme.withAlpha(Theme.maskBase, 0.18)
                 shadowBlur: 0.65
                 shadowVerticalOffset: 12
                 shadowHorizontalOffset: 0
@@ -507,7 +487,7 @@ Item {
         width: Math.min(parent.width - 48, statusLabel.implicitWidth + 36)
         height: 38
         radius: 19
-        color: page.statusFailed ? Theme.danger : Theme.withAlpha(Theme.textPrimary, 0.90)
+        color: page.statusFailed ? Theme.danger : Theme.withAlpha(Theme.maskBase, 0.90)
         visible: page.statusMessage.length > 0
         z: 60
 
