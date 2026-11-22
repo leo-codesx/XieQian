@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
@@ -1506,6 +1507,16 @@ QString BackendBridge::storageError() const
 QString BackendBridge::lastError() const
 {
     return lastError_;
+}
+
+qint64 BackendBridge::monotonicMilliseconds() const
+{
+    // QElapsedTimer 基于性能计数器，不受系统时间调整影响；进程内单调即可满足倒计时需求
+    static QElapsedTimer clock;
+    if (!clock.isValid()) {
+        clock.start();
+    }
+    return clock.elapsed();
 }
 
 // ─────────────────────────────────────────────────────────────

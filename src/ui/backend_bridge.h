@@ -76,6 +76,8 @@ public:
     Q_INVOKABLE bool exportData(const QString &filePath);
     Q_INVOKABLE bool importData(const QString &filePath);
     Q_INVOKABLE QString lastError() const;
+    // 进程内单调毫秒，用于倒计时等不受系统时间修改影响的计算
+    Q_INVOKABLE qint64 monotonicMilliseconds() const;
 
     int rosterCount() const;
 
