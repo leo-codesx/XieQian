@@ -19,11 +19,11 @@
 | QML 注册 | 无 `qt_add_qml_module`；`ui/qml.qrc`（prefix `/ui`）+ `qmldir`（仅 `singleton Theme 1.0`）。新增 QML 必须同轮登记 qrc |
 | Theme | `ui/qml/Theme.qml` 已存在，token 名沿用，禁止重命名；旧值改注释保留 |
 | 组件 | `IosSwitch` 已存在（自绘）；`PageHeader/GroupedList/ListRow/PrimaryButton` 由 R1 新增 |
-| 存储 | SQLite 单文件 `data.db`，已启用 WAL + synchronous=FULL + busy_timeout；schema 版本是 `PRAGMA user_version`（当前 2），无 `schema_version` 表 |
-| 缺失 | `quick_check`/损坏恢复/版本化迁移/数据目录回退链尚未实现 |
+| 存储 | SQLite 单文件 `data.db`，WAL + synchronous=FULL + busy_timeout；schema 用 `PRAGMA user_version`（当前 2）；启动后台 `quick_check`（独立连接，主线程最多等 200ms）；损坏时 `wal_checkpoint(TRUNCATE)` + 三件套同时间戳改名 `data_corrupted_<ts>.db`；`user_version` 事务化迁移；数据目录回退链 DataPath → AppData → Home → Temp |
+| 缺失 | 单实例激活通道（`QLocalServer/QLocalSocket`）；倒计时工具；数学键盘；函数图像缩放平移 |
 | 单实例 | 只有 `QLockFile` + 「已在运行」弹窗；`QLocalServer/QLocalSocket` 缺失 |
 | AI | DeepSeek，零信任（源码与安装包无内置 Key），强制 HTTPS（本机除外），备份不含 Key |
-| AI 网络 | 超时是 `QTimer::singleShot` + `abort()` 30s；无 `QNetworkInformation`、无 `setTransferTimeout`、无脱敏、无可达性拦截 |
+| AI 网络 | `QNetworkInformation` 可达性拦截（仅 Online 放行；Unknown 拦截待 R3.1 改为放行）、`setTransferTimeout`、错误分类（NET_DNS/NET_CONNECT/NET_TIMEOUT/NET_SSL/API_*）与脱敏诊断（`lastDiagnostic`）；无防重入 |
 | 分数 | 仅 JS（`ui/qml/components/ExpressionParser.js` 的 gcd/makeFraction/decimalToFraction/formatResult），显示为单行 `5/6 ≈ 0.833`，分母上限 100000 |
 | 函数图像 | `plotPaths` 已是分段结构、逐段 moveTo；无数学键盘、无缩放平移 |
 | 权重 | 唯一公式 `core::dynamicWeight`（`roster.cpp`）：`base * exp(-drawCount/3) * max(0.1, 1-streak*0.2)`；`weightsVersion` 不存在 |
@@ -91,6 +91,9 @@ CI_WATCH: <需重点看的测试/编译单元>
 ## 2. 进度
 
 - R0 完成：14 条事实修正已采纳。
-- R1 完成：Theme 改值（radiusCard 16、radiusControl 10、fontLargeTitle 32，textPrimary 保持 #000000）、
-  新增 PageHeader/GroupedList/ListRow/PrimaryButton、IosSwitch 改弹簧、SettingsPage 与 AddPage 接入。
-- 下一步 R2：剩余页面收口与全站硬编码扫描。
+- R1 完成：Theme 改值（radiusCard 16、radiusControl 10、fontLargeTitle 32）、新增 PageHeader/GroupedList/ListRow/PrimaryButton、IosSwitch 弹簧、SettingsPage 与 AddPage 接入。
+- R2 完成：`maskBase` 与 `textPrimary` 分离（27 处遮罩替换）、剩余页面标题收口、RosterPage 单卡列表、硬编码色清零。
+- R3 完成：AI 网络可达性拦截、transferTimeout、错误分类与脱敏诊断（提交 0448e32）。
+- R4 完成：启动 quick_check、损坏恢复、user_version 事务迁移、数据目录回退链、存储测试。
+- 下一步 R3.1：Unknown 改为放行、超时文案改「30 秒无响应」、postChat 防重入、诊断弹窗 QML。
+- 之后 R5：单实例激活。
