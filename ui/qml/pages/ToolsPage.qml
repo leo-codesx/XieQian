@@ -26,6 +26,9 @@ Item {
     // ─── 计算器状态 ───
     property string calcExpression: ""
     property string calcResult: "0"
+    // 精确分数与近似小数分开存，显示时主行分数、副行近似
+    property string calcExact: ""
+    property string calcApprox: ""
     property bool calcEvaluated: false
     property string calcError: ""
 
@@ -80,6 +83,8 @@ Item {
     function calcClear() {
         calcExpression = ""
         calcResult = "0"
+        calcExact = ""
+        calcApprox = ""
         calcEvaluated = false
         calcError = ""
     }
@@ -120,7 +125,10 @@ Item {
         }
 
         calcError = ""
-        calcResult = Parser.formatResult(outcome)
+        var formatted = Parser.formatResult(outcome)
+        calcExact = formatted.exact
+        calcApprox = formatted.approx
+        calcResult = formatted.value
     }
 
     function pressCalcKey(action) {
@@ -652,19 +660,41 @@ Item {
                                     }
                                 }
 
-                                Text {
+                                Item {
                                     width: parent.width
                                     height: parent.height - 28
-                                    text: page.calcError.length > 0 ? page.calcError
-                                                                    : page.calcResult
-                                    horizontalAlignment: Text.AlignRight
-                                    verticalAlignment: Text.AlignVCenter
-                                    color: page.calcError.length > 0
-                                           ? Theme.danger : Theme.textPrimary
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: page.calcResult.length > 12 ? 24 : 34
-                                    font.weight: Font.Bold
-                                    elide: Text.ElideLeft
+
+                                    Text {
+                                        id: calcMainText
+
+                                        width: parent.width
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: page.calcError.length > 0
+                                              ? page.calcError
+                                              : (page.calcExact.length > 0
+                                                 ? page.calcExact : page.calcResult)
+                                        horizontalAlignment: Text.AlignRight
+                                        color: page.calcError.length > 0
+                                               ? Theme.danger : Theme.textPrimary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: page.calcResult.length > 12 ? 24 : 34
+                                        font.weight: Font.Bold
+                                        elide: Text.ElideLeft
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        anchors.top: calcMainText.bottom
+                                        anchors.topMargin: 2
+                                        visible: page.calcError.length === 0
+                                                 && page.calcApprox.length > 0
+                                        text: page.calcApprox
+                                        horizontalAlignment: Text.AlignRight
+                                        color: Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontBody
+                                        elide: Text.ElideLeft
+                                    }
                                 }
                             }
                         }

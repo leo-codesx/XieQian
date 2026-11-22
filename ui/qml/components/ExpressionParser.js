@@ -589,16 +589,27 @@ function formatNumber(value) {
     return String(rounded)
 }
 
-// 计算器显示格式：能精确表示成分数时同时给出分数与小数，例如 “5/6 ≈ 0.833333”
-function formatResult(outcome) {
-    if (!outcome || !outcome.ok)
-        return "错误"
+// 近似值固定 6 位小数，避免 12 位尾数占满显示区
+function formatApprox(value) {
+    if (!isFinite(value))
+        return ""
+    return String(Math.round(value * 1e6) / 1e6)
+}
 
-    var text = formatNumber(outcome.value)
+// 计算器显示：精确分数与近似小数分开返回，调用方分成主行/副行渲染；
+// exact 为空表示没有可展示的分数，此时回退到 value
+function formatResult(outcome) {
+    if (!outcome || !outcome.ok) {
+        return { exact: "", approx: "", value: "", display: "错误" }
+    }
+
+    var numeric = formatNumber(outcome.value)
     var fraction = outcome.fraction
     if (fraction && fraction.d > 1 && fraction.d <= 100000
             && Math.abs(fraction.n) <= 1e12) {
-        return fraction.n + "/" + fraction.d + " ≈ " + text
+        var exact = fraction.n + "/" + fraction.d
+        var approx = "≈ " + formatApprox(outcome.value)
+        return { exact: exact, approx: approx, value: numeric, display: exact + " " + approx }
     }
-    return text
+    return { exact: "", approx: "", value: numeric, display: numeric }
 }
