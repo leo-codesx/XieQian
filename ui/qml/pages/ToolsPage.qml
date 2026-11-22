@@ -68,6 +68,15 @@ Item {
 
     // ─── 函数图像状态 ───
     property string plotText: "x = 16sin^3(t), y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)"
+    // 数学键盘的变量键随表达式类型切换：参数方程给 t，隐式方程给 x/y，其余给 x
+    readonly property var plotVariableKeys: {
+        var text = String(plotText)
+        if (/\bt\b/.test(text) || (/\bx\s*=/.test(text) && /\by\s*=/.test(text)))
+            return ["t"]
+        if (!/^\s*y\s*=/.test(text) && /\bx\b/.test(text) && /\by\b/.test(text))
+            return ["x", "y"]
+        return ["x"]
+    }
     // 参数方程的参数 t 扫过几整圈：螺旋线、蝴蝶曲线需要多圈才能画完
     property int plotTurns: 1
     property var plotPaths: []
@@ -822,6 +831,12 @@ Item {
                                 }
 
                                 onTextChanged: page.plotText = text
+                            }
+
+                            MathKeypad {
+                                width: parent.width
+                                target: plotField
+                                variableKeys: page.plotVariableKeys
                             }
 
                             Row {
