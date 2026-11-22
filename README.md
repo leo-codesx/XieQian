@@ -1,6 +1,6 @@
 # 撷签（XieQian）
 
-![Windows Build](https://github.com/IoveXCM520/XieQian/actions/workflows/build.yml/badge.svg?branch=main)
+![Windows Build](https://github.com/leo-codesx/XieQian/actions/workflows/build.yml/badge.svg?branch=main)
 
 面向教育场景的现代离线抽奖系统，基于 C++20 与 Qt 6 构建，适用于课堂提问、活动抽签与名单管理等场景。
 
@@ -48,4 +48,4 @@ ctest -C Release --test-dir build --output-on-failure
 
 ## 开源协议
 
-本项目采用 [MIT License](LICENSE) 发布，Copyright (c) 2026 IoveXCM520。
+本项目采用 [MIT License](LICENSE) 发布，Copyright (c) 2026 leo-codesx。
