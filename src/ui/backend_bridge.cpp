@@ -10,9 +10,11 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -23,8 +25,11 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QVariantMap>
+
+#include <QtConcurrent/QtConcurrentRun>
 
 #include "text_decoder.h"
 #include "xieqian/core/io/file_parser.h"
@@ -39,6 +44,7 @@ constexpr double kMaxWeight = 1000.0;
 // 成绩单调权时，没出现在成绩单上的人统一落到最低档
 constexpr double kLowestScoreWeight = 0.5;
 constexpr int kSaveDebounceMs = 220;
+constexpr int kSchemaVersion = 2;
 constexpr auto kConnectionName = "xieqian_state";
 
 // Config 表的键名
@@ -112,14 +118,18 @@ BackendBridge::BackendBridge(QObject *parent)
       drawEngine_(std::make_unique<xieqian::core::DrawEngine>(seededGenerator())),
       aiManager_(std::make_unique<AiManager>())
 {
-    if (openDatabase()) {
-        // 老版本把状态写在 data.json 里，首次升级时自动迁移进 SQLite。
-        // 迁移失败时保留内存中的旧数据，不能再用空库把它覆盖掉。
-        if (migrateLegacyJson()) {
-            (void)readState();
+    // 数据目录回退链：自定义目录 → AppData → Home → Temp，全部失败才退化到内存模式
+    if (ensureWritableDataDirectory()) {
+        if (openDatabase()) {
+            beginHealthCheck();
+        } else {
+            (void)recoverFromCorruption(storageError_);
         }
     } else {
-        qWarning() << "database unavailable, running in memory only:" << storageError_;
+        storageReady_ = false;
+        raiseStorageError(QStringLiteral("没有可写的数据目录，本次运行的数据只保存在内存中"));
+        qWarning().noquote() << "[DB] memory-only | reason=no_writable_directory";
+        emit storageReadyChanged();
     }
 
     aiManager_->setApiConfig(aiApiKey_, aiBaseUrl_, aiModel_);
@@ -128,7 +138,7 @@ BackendBridge::BackendBridge(QObject *parent)
     saveTimer_ = new QTimer(this);
     saveTimer_->setSingleShot(true);
     saveTimer_->setInterval(kSaveDebounceMs);
-    connect(saveTimer_, &QTimer::timeout, this, [this]() { writeState(); });
+    connect(saveTimer_, &QTimer::timeout, this, [this]() { (void)writeState(); });
 
     if (QCoreApplication *app = QCoreApplication::instance()) {
         connect(app, &QCoreApplication::aboutToQuit, this, &BackendBridge::flushState);
@@ -148,6 +158,13 @@ BackendBridge::~BackendBridge()
 bool BackendBridge::openDatabase()
 {
     const QString path = dataFilePath();
+    if (path.isEmpty()) {
+        storageReady_ = false;
+        raiseStorageError(QStringLiteral("没有可写的数据目录"));
+        emit storageReadyChanged();
+        return false;
+    }
+
     QDir().mkpath(QFileInfo(path).absolutePath());
 
     const QString connection = QString::fromLatin1(kConnectionName);
@@ -172,13 +189,7 @@ bool BackendBridge::openDatabase()
     pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
     pragma.exec(QStringLiteral("PRAGMA busy_timeout=5000"));
 
-    if (!ensureSchema()) {
-        database_.close();
-        storageReady_ = false;
-        emit storageReadyChanged();
-        return false;
-    }
-
+    // 建表与迁移推迟到健康检查之后：损坏库上禁止先改结构
     storageReady_ = true;
     storageError_.clear();
     emit storageReadyChanged();
@@ -203,39 +214,258 @@ void BackendBridge::closeDatabase()
 
 bool BackendBridge::ensureSchema()
 {
-    const QStringList statements{
-        QStringLiteral("CREATE TABLE IF NOT EXISTS roster ("
-                       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                       "name TEXT NOT NULL,"
-                       "student_id TEXT NOT NULL DEFAULT '',"
-                       "group_name TEXT NOT NULL DEFAULT '',"
-                       "enabled INTEGER NOT NULL DEFAULT 1,"
-                       "weight REAL NOT NULL DEFAULT 1.0,"
-                       "draw_count INTEGER NOT NULL DEFAULT 0,"
-                       "streak INTEGER NOT NULL DEFAULT 0,"
-                       "position INTEGER NOT NULL DEFAULT 0)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS history ("
-                       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                       "name TEXT NOT NULL,"
-                       "created_at TEXT NOT NULL)"),
-        QStringLiteral("CREATE TABLE IF NOT EXISTS config ("
-                       "\"key\" TEXT PRIMARY KEY,"
-                       "\"value\" TEXT NOT NULL)"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_roster_position ON roster(position)"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_history_id ON history(id)"),
-    };
-
     QSqlQuery query(database_);
-    for (const QString &statement : statements) {
-        if (!query.exec(statement)) {
-            raiseStorageError(QStringLiteral("初始化数据库表失败：%1").arg(query.lastError().text()));
-            return false;
+    int version = 0;
+    if (query.exec(QStringLiteral("PRAGMA user_version")) && query.next()) {
+        version = query.value(0).toInt();
+    }
+
+    // 比当前程序更新的库不降级，避免新字段被旧程序误读
+    if (version > kSchemaVersion) {
+        raiseStorageError(QStringLiteral("数据库版本（%1）高于当前程序（%2），请升级程序后再打开")
+                              .arg(version)
+                              .arg(kSchemaVersion));
+        return false;
+    }
+    if (version == kSchemaVersion) {
+        return true;
+    }
+
+    if (!database_.transaction()) {
+        raiseStorageError(QStringLiteral("开启迁移事务失败：%1").arg(database_.lastError().text()));
+        return false;
+    }
+
+    bool ok = true;
+    QString failure;
+
+    if (version < 1) {
+        const QStringList statements{
+            QStringLiteral("CREATE TABLE IF NOT EXISTS roster ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                           "name TEXT NOT NULL,"
+                           "student_id TEXT NOT NULL DEFAULT '',"
+                           "group_name TEXT NOT NULL DEFAULT '',"
+                           "enabled INTEGER NOT NULL DEFAULT 1,"
+                           "weight REAL NOT NULL DEFAULT 1.0,"
+                           "draw_count INTEGER NOT NULL DEFAULT 0,"
+                           "streak INTEGER NOT NULL DEFAULT 0,"
+                           "position INTEGER NOT NULL DEFAULT 0)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS history ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                           "name TEXT NOT NULL,"
+                           "created_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE TABLE IF NOT EXISTS config ("
+                           "\"key\" TEXT PRIMARY KEY,"
+                           "\"value\" TEXT NOT NULL)"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_roster_position ON roster(position)"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_history_id ON history(id)"),
+        };
+        for (const QString &statement : statements) {
+            if (!query.exec(statement)) {
+                ok = false;
+                failure = query.lastError().text();
+                break;
+            }
         }
     }
 
-    // schema 版本号，方便后续迁移；当前为 2（JSON → SQLite 后的第一版）
-    query.exec(QStringLiteral("PRAGMA user_version = 2"));
+    // v2：JSON → SQLite 后的第一版，结构无新增（索引已在 v1 建立）
+
+    if (ok) {
+        if (!query.exec(QStringLiteral("PRAGMA user_version = %1").arg(kSchemaVersion))) {
+            ok = false;
+            failure = query.lastError().text();
+        }
+    }
+
+    if (!ok) {
+        database_.rollback();
+        raiseStorageError(QStringLiteral("数据库迁移失败，已回滚：%1").arg(failure));
+        return false;
+    }
+
+    if (!database_.commit()) {
+        const QString message = database_.lastError().text();
+        database_.rollback();
+        raiseStorageError(QStringLiteral("迁移提交失败，已回滚：%1").arg(message));
+        return false;
+    }
+
     return true;
+}
+
+void BackendBridge::beginHealthCheck()
+{
+    const QString path = dataFilePath();
+    if (path.isEmpty()) {
+        return;
+    }
+
+    healthWatcher_ = new QFutureWatcher<xieqian::storage::Health>(this);
+    healthWatcher_->setFuture(
+        QtConcurrent::run([path]() { return xieqian::storage::quickCheck(path); }));
+
+    // 主线程最多等 200ms；期间让事件循环继续跑，避免 UI 冻结
+    QEventLoop loop;
+    QTimer probe;
+    probe.setSingleShot(true);
+    connect(&probe, &QTimer::timeout, &loop, &QEventLoop::quit);
+    connect(healthWatcher_, &QFutureWatcher<xieqian::storage::Health>::finished, &loop,
+            &QEventLoop::quit);
+    probe.start(200);
+    loop.exec();
+
+    if (healthWatcher_->isFinished()) {
+        finishHealthCheck(healthWatcher_->result());
+        delete healthWatcher_;
+        healthWatcher_ = nullptr;
+        return;
+    }
+
+    // 超时：先乐观放行，结果回来后补处理
+    connect(healthWatcher_, &QFutureWatcher<xieqian::storage::Health>::finished, this, [this]() {
+        finishHealthCheck(healthWatcher_->result());
+    });
+    if (healthWatcher_->isFinished()) {
+        finishHealthCheck(healthWatcher_->result());
+        delete healthWatcher_;
+        healthWatcher_ = nullptr;
+        return;
+    }
+
+    storageReady_ = true;
+    emit storageReadyChanged();
+}
+
+void BackendBridge::finishHealthCheck(const xieqian::storage::Health &health)
+{
+    if (healthHandled_) {
+        return;
+    }
+    healthHandled_ = true;
+
+    if (!health.ok) {
+        (void)recoverFromCorruption(health.detail);
+        return;
+    }
+
+    if (!ensureSchema()) {
+        // 迁移失败时保留原库，不重建、不覆盖
+        storageReady_ = false;
+        emit storageReadyChanged();
+        return;
+    }
+
+    // 老版本把状态写在 data.json 里，首次升级时自动迁移进 SQLite
+    if (migrateLegacyJson()) {
+        (void)readState();
+    }
+
+    storageReady_ = true;
+    emit storageReadyChanged();
+    emit rosterUpdated();
+    emit historyUpdated();
+    emit customWheelsChanged();
+    emit drawSettingsChanged();
+    emit soundEnabledChanged();
+    emit motionEnabledChanged();
+    emit dynamicWeightsChanged();
+    emit aiConfigChanged();
+}
+
+bool BackendBridge::recoverFromCorruption(const QString &reason)
+{
+    const QString path = dataFilePath();
+    if (path.isEmpty()) {
+        storageReady_ = false;
+        emit storageReadyChanged();
+        return false;
+    }
+
+    // 先把 WAL 合并回主库，再关闭连接，否则改名后 --wal 会残留
+    if (database_.isValid() && database_.isOpen()) {
+        QSqlQuery checkpoint(database_);
+        checkpoint.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
+    }
+    closeDatabase();
+
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    const xieqian::storage::Isolation isolation = xieqian::storage::isolateCorrupted(path, stamp);
+    if (!isolation.ok) {
+        storageReady_ = false;
+        raiseStorageError(QStringLiteral("数据库损坏且无法隔离（文件可能被占用）：%1")
+                              .arg(isolation.failed.join(QStringLiteral("、"))));
+        qWarning().noquote() << "[DB] recovery blocked | reason=rename_failed | files="
+                             << isolation.failed.join(QStringLiteral(","));
+        emit storageReadyChanged();
+        return false;
+    }
+
+    if (!openDatabase() || !ensureSchema()) {
+        storageReady_ = false;
+        raiseStorageError(QStringLiteral("损坏数据库已隔离，但新建数据库失败：%1").arg(storageError_));
+        emit storageReadyChanged();
+        return false;
+    }
+
+    qWarning().noquote() << "[DB] recovered | oldFile=" << isolation.target << "| reason=" << reason;
+    storageReady_ = true;
+    emit storageReadyChanged();
+    emit storageRecovered(isolation.target);
+    emit rosterUpdated();
+    emit historyUpdated();
+    emit customWheelsChanged();
+    emit drawSettingsChanged();
+    emit aiConfigChanged();
+    return true;
+}
+
+bool BackendBridge::ensureWritableDataDirectory()
+{
+    QStringList candidates;
+    QSettings settings(QStringLiteral("HKEY_CURRENT_USER\\Software\\XieQian"), QSettings::NativeFormat);
+    const QString custom = settings.value(QStringLiteral("DataPath")).toString().trimmed();
+    if (!custom.isEmpty()) {
+        candidates << custom;
+    }
+    candidates << QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+               << QStandardPaths::writableLocation(QStandardPaths::HomeLocation)
+               << QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    candidates.removeDuplicates();
+
+    for (const QString &candidate : candidates) {
+        if (candidate.isEmpty()) {
+            continue;
+        }
+        if (!QDir().mkpath(candidate)) {
+            qWarning().noquote() << "[DB] path rejected | dir=" << candidate << "| reason=mkpath_failed";
+            continue;
+        }
+
+        // 用临时文件探写，避免只靠权限位误判（机房还原卡目录常见）
+        QTemporaryFile probe(QDir(candidate).filePath(QStringLiteral("xq_probe_XXXXXX")));
+        if (!probe.open()) {
+            qWarning().noquote() << "[DB] path rejected | dir=" << candidate << "| reason=not_writable";
+            continue;
+        }
+        probe.close();
+
+        dataDirectory_ = candidate;
+        qInfo().noquote() << "[DB] data directory | path=" << dataDirectory_;
+        emit databasePathChanged();
+        return true;
+    }
+
+    return false;
+}
+
+QString BackendBridge::databasePath() const
+{
+    if (dataDirectory_.isEmpty()) {
+        return QString();
+    }
+    return QDir(dataDirectory_).filePath(QStringLiteral("data.db"));
 }
 
 bool BackendBridge::readState()
@@ -367,6 +597,7 @@ bool BackendBridge::writeState()
 
     if (!database_.transaction()) {
         raiseStorageError(QStringLiteral("开启事务失败：%1").arg(database_.lastError().text()));
+        emit storageWriteFailed(storageError_);
         return false;
     }
 
@@ -478,6 +709,7 @@ bool BackendBridge::writeState()
     if (!ok) {
         database_.rollback();
         raiseStorageError(QStringLiteral("保存数据失败：%1").arg(failure));
+        emit storageWriteFailed(storageError_);
         return false;
     }
 
@@ -485,6 +717,7 @@ bool BackendBridge::writeState()
         const QString message = database_.lastError().text();
         database_.rollback();
         raiseStorageError(QStringLiteral("提交事务失败：%1").arg(message));
+        emit storageWriteFailed(storageError_);
         return false;
     }
 
@@ -545,7 +778,7 @@ void BackendBridge::saveState()
     if (saveTimer_ != nullptr) {
         saveTimer_->start();
     } else {
-        writeState();
+        (void)writeState();
     }
 }
 
@@ -555,7 +788,7 @@ void BackendBridge::flushState()
         saveTimer_->stop();
     }
     if (dirty_) {
-        writeState();
+        (void)writeState();
     }
 }
 
@@ -567,23 +800,19 @@ void BackendBridge::raiseStorageError(const QString &message)
 
 QString BackendBridge::dataFilePath()
 {
-    QSettings settings(QStringLiteral("HKEY_CURRENT_USER\\Software\\XieQian"), QSettings::NativeFormat);
-    const QString customPath = settings.value(QStringLiteral("DataPath")).toString().trimmed();
-
-    if (!customPath.isEmpty()) {
-        if (!QDir().mkpath(customPath)) {
-            qWarning() << "cannot create data directory:" << customPath;
-        }
-        return QDir(customPath).filePath(QStringLiteral("data.db"));
+    if (dataDirectory_.isEmpty()) {
+        return QString();
     }
-
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
-        .filePath(QStringLiteral("data.db"));
+    return QDir(dataDirectory_).filePath(QStringLiteral("data.db"));
 }
 
 QString BackendBridge::legacyJsonPath()
 {
-    return QFileInfo(dataFilePath()).absoluteDir().filePath(QStringLiteral("data.json"));
+    const QString path = dataFilePath();
+    if (path.isEmpty()) {
+        return QString();
+    }
+    return QFileInfo(path).absoluteDir().filePath(QStringLiteral("data.json"));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1399,7 +1628,7 @@ bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &
     QDir().mkpath(QFileInfo(dbPath).absolutePath());
 
     if (QFileInfo(sourcePath).absoluteFilePath() == QFileInfo(dbPath).absoluteFilePath()) {
-        if (!openDatabase() || !readState()) {
+        if (!openDatabase() || !ensureSchema() || !readState()) {
             error = QStringLiteral("数据库无法读取，请确认文件未被占用");
             return false;
         }
@@ -1414,6 +1643,7 @@ bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &
     if (hadCurrent && !QFile::rename(dbPath, backupPath)) {
         error = QStringLiteral("当前数据库文件被占用，无法覆盖。请关闭其它撷签窗口后重试");
         (void)openDatabase();
+        (void)ensureSchema();
         (void)readState();
         return false;
     }
@@ -1427,11 +1657,12 @@ bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &
         }
         error = QStringLiteral("无法覆盖数据库文件，请检查数据目录是否可写或文件是否被占用");
         (void)openDatabase();
+        (void)ensureSchema();
         (void)readState();
         return false;
     }
 
-    if (!openDatabase() || !readState()) {
+    if (!openDatabase() || !ensureSchema() || !readState()) {
         closeDatabase();
         QFile::remove(dbPath);
         removeSqliteSidecars(dbPath);
@@ -1440,6 +1671,7 @@ bool BackendBridge::replaceDatabaseFromFile(const QString &sourcePath, QString &
         }
         error = QStringLiteral("备份数据库格式不正确或无法读取，已恢复到原数据");
         (void)openDatabase();
+        (void)ensureSchema();
         (void)readState();
         return false;
     }
@@ -1503,6 +1735,7 @@ bool BackendBridge::importData(const QString &filePath)
             removeSqliteSidecars(tempPath);
             // 临时库构建失败时回到原数据库，避免内存里留下半套数据
             (void)openDatabase();
+            (void)ensureSchema();
             (void)readState();
             return false;
         }

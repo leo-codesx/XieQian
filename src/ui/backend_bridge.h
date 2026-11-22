@@ -12,11 +12,14 @@
 #include <QVector>
 
 #include "ai_manager.h"
+#include "storage_recovery.h"
 #include "xieqian/core/draw/draw_engine.h"
 #include "xieqian/core/roster/roster.h"
 
 class QJsonObject;
 class QTimer;
+template <typename T>
+class QFutureWatcher;
 
 class BackendBridge : public QObject
 {
@@ -31,6 +34,7 @@ class BackendBridge : public QObject
     Q_PROPERTY(bool dynamicWeights READ dynamicWeights WRITE setDynamicWeights NOTIFY dynamicWeightsChanged)
     Q_PROPERTY(bool storageReady READ storageReady NOTIFY storageReadyChanged)
     Q_PROPERTY(QString storageError READ storageError NOTIFY storageReadyChanged)
+    Q_PROPERTY(QString databasePath READ databasePath NOTIFY databasePathChanged)
 
 public:
     explicit BackendBridge(QObject *parent = nullptr);
@@ -93,6 +97,8 @@ public:
 
     bool storageReady() const;
     QString storageError() const;
+    // 实际生效的数据目录（回退链逐级下探后的结果），供开发者页只读展示
+    QString databasePath() const;
 
 signals:
     void rosterUpdated();
@@ -106,6 +112,9 @@ signals:
     void dynamicWeightsChanged();
     void aiConfigChanged();
     void storageReadyChanged();
+    void storageWriteFailed(const QString &reason);
+    void storageRecovered(const QString &oldFile);
+    void databasePathChanged();
 
 private:
     struct HistoryEntry {
@@ -130,6 +139,11 @@ private:
     [[nodiscard]] bool openDatabase();
     void closeDatabase();
     [[nodiscard]] bool ensureSchema();
+    [[nodiscard]] bool migrateSchema();
+    void beginHealthCheck();
+    void finishHealthCheck(const xieqian::storage::Health &health);
+    [[nodiscard]] bool recoverFromCorruption(const QString &reason);
+    [[nodiscard]] bool ensureWritableDataDirectory();
     [[nodiscard]] bool readState();
     [[nodiscard]] bool writeState();
     // 把 JSON 状态写成一份独立的 SQLite 数据库，供恢复时覆盖 data.db
@@ -139,8 +153,8 @@ private:
     [[nodiscard]] bool replaceDatabaseFromFile(const QString &sourcePath, QString &error);
     // 返回 false 表示发现了旧 JSON 但迁移写盘失败（此时内存中已载入旧数据，不再被空库覆盖）
     [[nodiscard]] bool migrateLegacyJson();
-    [[nodiscard]] static QString dataFilePath();
-    [[nodiscard]] static QString legacyJsonPath();
+    [[nodiscard]] QString dataFilePath();
+    [[nodiscard]] QString legacyJsonPath();
     void raiseStorageError(const QString &message);
 
     std::shared_ptr<xieqian::core::Roster> roster_;
@@ -148,6 +162,8 @@ private:
     std::unique_ptr<AiManager> aiManager_;
     QSqlDatabase database_;
     QTimer *saveTimer_ = nullptr;
+    QFutureWatcher<xieqian::storage::Health> *healthWatcher_ = nullptr;
+    QString dataDirectory_;
     std::vector<HistoryEntry> history_;
     std::vector<CustomWheel> customWheels_;
     QVector<HistoryEntry> pendingHistory_;
@@ -165,6 +181,7 @@ private:
     bool dynamicWeights_ = false;
     bool firstRunSeen_ = false;
     bool storageReady_ = false;
+    bool healthHandled_ = false;
     bool dirty_ = false;
     bool historyRewritePending_ = false;
 };
