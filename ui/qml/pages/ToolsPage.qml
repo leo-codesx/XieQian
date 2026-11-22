@@ -341,7 +341,9 @@ Item {
             return
 
         var samples = Math.max(200, Math.min(4000, Math.round(600 * 20 / span)))
-        var result = sampleExplicit(compiled, b.xmin, b.xmax, samples, (b.ymax - b.ymin) * 0.5)
+        var stepLike = /(floor|ceil|round|sign)\s*\(/i.test(String(currentPlotSpec.expr))
+        var result = sampleExplicit(compiled, b.xmin, b.xmax, samples,
+                                    stepLike ? 0.75 : (b.ymax - b.ymin) * 0.5)
         if (result) {
             plotPaths = result.paths
             plotCanvas.requestPaint()
@@ -430,7 +432,9 @@ Item {
             }
         }
 
-        var result = sampleExplicit(compiled, -10.0, 10.0, 600, 0)
+        // 阶跃函数的跳变恒为 1，用固定的 0.75 阈值才能切开；普通曲线仍用数据跨度一半
+        var stepLike = /(floor|ceil|round|sign)\s*\(/i.test(String(spec.expr))
+        var result = sampleExplicit(compiled, -10.0, 10.0, 600, stepLike ? 0.75 : 0)
         if (!result) {
             plotError = "这个表达式在可见范围内没有曲线"
             return
@@ -767,7 +771,7 @@ Item {
             ToolSegment {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                width: 260
+                width: 300
                 height: 44
                 currentIndex: page.mode
                 labels: ["计算器", "函数图像", "倒计时"]
