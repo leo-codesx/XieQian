@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 
+#include <QNetworkInformation>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -10,15 +11,44 @@
 
 class QJsonObject;
 class QNetworkAccessManager;
+class QNetworkReply;
 class QUrl;
+
+enum class AiErrorKind {
+    None,
+    NoNetwork,
+    Dns,
+    Connect,
+    Timeout,
+    Ssl,
+    Unauthorized,
+    Server,
+    Parse,
+    Other
+};
+
+// 用户只看 userMessage；diagnostic 已脱敏，供「查看诊断」与日志使用
+struct AiErrorInfo {
+    AiErrorKind kind = AiErrorKind::None;
+    QString userMessage;
+    QString diagnostic;
+
+    [[nodiscard]] bool failed() const { return kind != AiErrorKind::None; }
+};
 
 class AiManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString lastDiagnostic READ lastDiagnostic NOTIFY lastDiagnosticChanged)
 
 public:
     explicit AiManager(QObject *parent = nullptr);
     ~AiManager() override;
+
+    // 全局唯一的网络状态入口：后端不可用（nullptr）时返回 nullptr，调用方降级放行
+    [[nodiscard]] static QNetworkInformation *networkInformation();
+    [[nodiscard]] bool networkAvailable() const;
+    [[nodiscard]] QString lastDiagnostic() const;
 
     // 颁奖词：使用用户在设置页配置的文本 API Key
     Q_INVOKABLE void generateAwardSpeech(const QString &winnerName);
@@ -48,11 +78,12 @@ signals:
     void ocrProgress(const QString &message);
     void functionGenerated(const QString &expression);
     void functionFailed(const QString &message);
+    void lastDiagnosticChanged();
 
 private:
     enum class RequestKind { AwardSpeech, FunctionExpression };
 
-    using ChatHandler = std::function<void(bool ok, const QString &content, const QString &error)>;
+    using ChatHandler = std::function<void(bool ok, const QString &content, const AiErrorInfo &error)>;
 
     void requestCompletion(const QString &prompt, RequestKind kind);
     void emitFailure(RequestKind kind, const QString &message);
@@ -75,7 +106,17 @@ private:
     void failOcr(const QString &message);
     [[nodiscard]] bool prepareOcrImage(const QString &filePath);
 
+    [[nodiscard]] static AiErrorInfo classifyFailure(QNetworkReply *reply, const QUrl &url,
+                                                     const QByteArray &body, qint64 elapsedMs,
+                                                     int timeoutMs);
+    [[nodiscard]] static AiErrorInfo localFailure(AiErrorKind kind, const QString &message);
+    [[nodiscard]] static QString sanitizedUrl(const QUrl &url);
+    [[nodiscard]] static QString maskedBody(const QByteArray &body);
+    void rememberDiagnostic(const AiErrorInfo &info);
+
     std::unique_ptr<QNetworkAccessManager> network_;
+    QNetworkInformation::Reachability reachability_ = QNetworkInformation::Reachability::Unknown;
+    QString lastDiagnostic_;
     QString apiKey_;
     QString baseUrl_;
     QString model_;

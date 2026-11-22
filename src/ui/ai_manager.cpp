@@ -1,16 +1,17 @@
 ﻿#include "ai_manager.h"
 
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QNetworkInformation>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
-#include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -169,79 +170,53 @@ QString responseErrorMessage(const QByteArray &body)
     return message;
 }
 
-// 把底层网络错误翻译成用户能据此排查的中文提示，并尽量带上服务端返回的原因
-QString networkFailureMessage(QNetworkReply *reply, bool timedOut, const QByteArray &body)
+QString reachabilityName(QNetworkInformation::Reachability value)
 {
-    if (timedOut) {
-        return QStringLiteral("请求超时：30 秒内没有收到服务器响应，请检查网络连接后重试");
-    }
-
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QString serverDetail = responseErrorMessage(body);
-    const auto withDetail = [&serverDetail](const QString &message) {
-        return serverDetail.isEmpty() ? message
-                                      : message + QStringLiteral("（服务端返回：") + serverDetail
-                                            + QStringLiteral("）");
-    };
-
-    switch (reply->error()) {
-    case QNetworkReply::HostNotFoundError:
-        return QStringLiteral("无法解析服务器域名，请检查电脑是否连网，或核对 Base URL 是否拼写正确");
-    case QNetworkReply::ConnectionRefusedError:
-        return QStringLiteral("服务器拒绝连接，请检查接口地址、端口或代理设置");
-    case QNetworkReply::RemoteHostClosedError:
-        return QStringLiteral("服务器意外断开连接，请稍后重试");
-    case QNetworkReply::TimeoutError:
-        return QStringLiteral("请求超时，请检查网络连接后重试");
-    case QNetworkReply::TemporaryNetworkFailureError:
-    case QNetworkReply::NetworkSessionFailedError:
-        return QStringLiteral("无法连接到服务器，请检查电脑是否连网");
-    case QNetworkReply::SslHandshakeFailedError:
-        return QStringLiteral("HTTPS 安全连接失败，请检查系统时间或网络代理设置");
-    case QNetworkReply::ProxyConnectionRefusedError:
-    case QNetworkReply::ProxyConnectionClosedError:
-    case QNetworkReply::ProxyNotFoundError:
-    case QNetworkReply::ProxyTimeoutError:
-        return QStringLiteral("代理服务器连接失败，请检查电脑的代理设置");
-    case QNetworkReply::ProxyAuthenticationRequiredError:
-        return QStringLiteral("代理服务器需要账号密码，请检查代理设置");
-    case QNetworkReply::AuthenticationRequiredError:
-        return withDetail(QStringLiteral("API Key 无效或未授权，请到设置页检查 Key"));
-    case QNetworkReply::ContentAccessDenied:
-        return withDetail(QStringLiteral("服务器拒绝访问（403），请检查 API Key 权限"));
-    case QNetworkReply::ContentNotFoundError:
-        return withDetail(QStringLiteral("接口地址不存在（404），请检查 Base URL 是否正确"));
-    case QNetworkReply::ContentOperationNotPermittedError:
-    case QNetworkReply::ContentConflictError:
-    case QNetworkReply::UnknownContentError:
-        break;
-    default:
+    switch (value) {
+    case QNetworkInformation::Reachability::Online:
+        return QStringLiteral("Online");
+    case QNetworkInformation::Reachability::Disconnected:
+        return QStringLiteral("Disconnected");
+    case QNetworkInformation::Reachability::Local:
+        return QStringLiteral("Local");
+    case QNetworkInformation::Reachability::Site:
+        return QStringLiteral("Site");
+    case QNetworkInformation::Reachability::Unknown:
         break;
     }
+    return QStringLiteral("Unknown");
+}
 
-    if (status == 401) {
-        return withDetail(QStringLiteral("API Key 无效或未授权，请到设置页检查 Key"));
+QString errorKindName(AiErrorKind kind)
+{
+    switch (kind) {
+    case AiErrorKind::None:
+        return QStringLiteral("NONE");
+    case AiErrorKind::NoNetwork:
+        return QStringLiteral("NET_NO_NETWORK");
+    case AiErrorKind::Dns:
+        return QStringLiteral("NET_DNS");
+    case AiErrorKind::Connect:
+        return QStringLiteral("NET_CONNECT");
+    case AiErrorKind::Timeout:
+        return QStringLiteral("NET_TIMEOUT");
+    case AiErrorKind::Ssl:
+        return QStringLiteral("NET_SSL");
+    case AiErrorKind::Unauthorized:
+        return QStringLiteral("API_UNAUTHORIZED");
+    case AiErrorKind::Server:
+        return QStringLiteral("API_SERVER");
+    case AiErrorKind::Parse:
+        return QStringLiteral("API_PARSE");
+    case AiErrorKind::Other:
+        break;
     }
-    if (status == 402) {
-        return withDetail(QStringLiteral("账户余额不足或未开通该模型"));
-    }
-    if (status == 403) {
-        return withDetail(QStringLiteral("服务器拒绝访问（403），请检查 API Key 权限"));
-    }
-    if (status == 404) {
-        return withDetail(QStringLiteral("接口地址不存在（404），请检查 Base URL 是否正确"));
-    }
-    if (status == 429) {
-        return withDetail(QStringLiteral("请求过于频繁（429），请稍后再试"));
-    }
-    if (status >= 500) {
-        return withDetail(QStringLiteral("服务器暂时不可用（%1），请稍后再试").arg(status));
-    }
-    if (!serverDetail.isEmpty()) {
-        return QStringLiteral("AI 接口返回错误：") + serverDetail;
-    }
+    return QStringLiteral("API_OTHER");
+}
 
-    return QStringLiteral("网络异常，请检查电脑是否连网后重试");
+QString timeoutMessage(int timeoutMs)
+{
+    return QStringLiteral("请求超时（%1s），请稍后重试").arg(qMax(1, timeoutMs / 1000));
 }
 
 }  // namespace
@@ -249,9 +224,161 @@ QString networkFailureMessage(QNetworkReply *reply, bool timedOut, const QByteAr
 AiManager::AiManager(QObject *parent)
     : QObject(parent), network_(std::make_unique<QNetworkAccessManager>())
 {
+    if (QNetworkInformation *info = networkInformation()) {
+        reachability_ = info->reachability();
+        connect(info, &QNetworkInformation::reachabilityChanged, this,
+                [this](QNetworkInformation::Reachability value) { reachability_ = value; });
+    } else {
+        qWarning().noquote() << "[NET] reachability backend unavailable, requests are not blocked";
+    }
 }
 
 AiManager::~AiManager() = default;
+
+QNetworkInformation *AiManager::networkInformation()
+{
+    static QNetworkInformation *instance = [] {
+        if (!QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Reachability)) {
+            qWarning().noquote() << "[NET] loadBackendByFeatures(Reachability) failed";
+        }
+        return QNetworkInformation::instance();
+    }();
+    return instance;
+}
+
+bool AiManager::networkAvailable() const
+{
+    // 后端不可用时不阻断：交给请求自身报错，避免把 Unknown 当成离线误杀
+    if (networkInformation() == nullptr) {
+        return true;
+    }
+    return reachability_ == QNetworkInformation::Reachability::Online;
+}
+
+QString AiManager::lastDiagnostic() const
+{
+    return lastDiagnostic_;
+}
+
+QString AiManager::sanitizedUrl(const QUrl &url)
+{
+    // 只保留 scheme://host/path，query 与 userinfo 一律丢弃
+    QUrl clean = url;
+    clean.setQuery(QString());
+    clean.setFragment(QString());
+    clean.setUserInfo(QString());
+    const QString text =
+        clean.toString(QUrl::RemoveQuery | QUrl::RemoveFragment | QUrl::RemoveUserInfo);
+    return text.isEmpty() ? QStringLiteral("(invalid-url)") : text;
+}
+
+QString AiManager::maskedBody(const QByteArray &body)
+{
+    if (body.isEmpty()) {
+        return QString();
+    }
+
+    QString text = QString::fromUtf8(body.left(512));
+    static const QRegularExpression keyPattern(QStringLiteral("sk-[A-Za-z0-9_-]{4,}"));
+    text.replace(keyPattern, QStringLiteral("sk-***"));
+    return text.trimmed();
+}
+
+AiErrorInfo AiManager::localFailure(AiErrorKind kind, const QString &message)
+{
+    AiErrorInfo info;
+    info.kind = kind;
+    info.userMessage = message;
+    info.diagnostic = QStringLiteral("kind=%1").arg(errorKindName(kind));
+    return info;
+}
+
+void AiManager::rememberDiagnostic(const AiErrorInfo &info)
+{
+    lastDiagnostic_ = info.diagnostic;
+    emit lastDiagnosticChanged();
+}
+
+AiErrorInfo AiManager::classifyFailure(QNetworkReply *reply, const QUrl &url,
+                                       const QByteArray &body, qint64 elapsedMs, int timeoutMs)
+{
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString serverDetail = responseErrorMessage(body);
+
+    AiErrorKind kind = AiErrorKind::Other;
+    QString message;
+
+    switch (reply->error()) {
+    case QNetworkReply::HostNotFoundError:
+        kind = AiErrorKind::Dns;
+        message = QStringLiteral("域名解析失败，请检查网络或稍后重试");
+        break;
+    case QNetworkReply::ConnectionRefusedError:
+    case QNetworkReply::RemoteHostClosedError:
+    case QNetworkReply::NetworkSessionFailedError:
+    case QNetworkReply::TemporaryNetworkFailureError:
+    case QNetworkReply::ProxyConnectionRefusedError:
+    case QNetworkReply::ProxyConnectionClosedError:
+    case QNetworkReply::ProxyNotFoundError:
+    case QNetworkReply::ProxyTimeoutError:
+    case QNetworkReply::ProxyAuthenticationRequiredError:
+        kind = AiErrorKind::Connect;
+        message = QStringLiteral("无法连接服务器，请稍后重试");
+        break;
+    case QNetworkReply::TimeoutError:
+    case QNetworkReply::OperationCanceledError:
+        kind = AiErrorKind::Timeout;
+        message = timeoutMessage(timeoutMs);
+        break;
+    case QNetworkReply::SslHandshakeFailedError:
+        kind = AiErrorKind::Ssl;
+        message = QStringLiteral("安全连接失败，请检查系统时间或证书");
+        break;
+    default:
+        break;
+    }
+
+    if (kind == AiErrorKind::Other) {
+        if (status == 401 || status == 403) {
+            kind = AiErrorKind::Unauthorized;
+            message = QStringLiteral("AI 密钥无效或已过期，请到「设置 → AI 助手配置」更新");
+        } else if (status == 402) {
+            message = QStringLiteral("账户余额不足或未开通该模型");
+        } else if (status == 404) {
+            message = QStringLiteral("接口地址不存在（404），请检查 Base URL 是否正确");
+        } else if (status == 429) {
+            message = QStringLiteral("请求过于频繁，请稍后重试");
+        } else if (status >= 500) {
+            kind = AiErrorKind::Server;
+            message = QStringLiteral("服务暂时不可用");
+        } else if (!serverDetail.isEmpty()) {
+            message = QStringLiteral("AI 接口返回错误：") + serverDetail;
+        } else {
+            message = QStringLiteral("无法连接服务器，请稍后重试");
+        }
+    }
+
+    AiErrorInfo info;
+    info.kind = kind;
+    info.userMessage = message;
+
+    QStringList detail;
+    detail << QStringLiteral("kind=%1").arg(errorKindName(kind));
+    detail << QStringLiteral("url=%1").arg(sanitizedUrl(url));
+    detail << QStringLiteral("http=%1").arg(status);
+    detail << QStringLiteral("elapsed=%1ms").arg(elapsedMs);
+    detail << QStringLiteral("timeout=%1ms").arg(timeoutMs);
+    detail << QStringLiteral("error=%1").arg(reply->errorString());
+    if (!serverDetail.isEmpty()) {
+        detail << QStringLiteral("server=%1").arg(serverDetail);
+    }
+    const QString bodyText = maskedBody(body);
+    if (!bodyText.isEmpty()) {
+        detail << QStringLiteral("body=%1").arg(bodyText);
+    }
+    info.diagnostic = detail.join(QLatin1Char('\n'));
+    return info;
+}
 
 void AiManager::setApiConfig(const QString &apiKey, const QString &baseUrl, const QString &model)
 {
@@ -338,58 +465,86 @@ bool AiManager::ensureApiKey()
 void AiManager::postChat(const QJsonObject &payload, const QString &key, const QString &endpoint,
                          int timeoutMs, ChatHandler handler)
 {
-    QNetworkRequest request{QUrl(endpoint)};
+    const QUrl requestUrl(endpoint);
+
+    // 所有 AI 请求都经这里：断网时直接拦下，不发任何请求
+    if (!networkAvailable()) {
+        AiErrorInfo info = localFailure(AiErrorKind::NoNetwork,
+                                        QStringLiteral("当前无网络连接，请检查网络后重试"));
+        info.diagnostic = QStringLiteral("kind=NET_NO_NETWORK\nreachability=%1")
+                              .arg(reachabilityName(reachability_));
+        qWarning().noquote() << "[NET] blocked | reason=no_network | reachability="
+                             << reachabilityName(reachability_);
+        rememberDiagnostic(info);
+        handler(false, QString(), info);
+        return;
+    }
+
+    QNetworkRequest request{requestUrl};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Authorization", "Bearer " + key.toUtf8());
+    // 传输超时交给 Qt 自己收敛，超时表现为 Timeout/OperationCanceled，不再 QTimer + abort 双轨
+    request.setTransferTimeout(timeoutMs);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
 
     QNetworkReply *reply =
         network_->post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
 
-    // 硬性超时：超时后中止请求，finished 中统一回调失败
-    QTimer::singleShot(timeoutMs, reply, [reply]() {
-        if (reply->isRunning()) {
-            // 自己的主动中止与用户取消区分开，超时才提示超时
-            reply->setProperty("xqTimedOut", true);
-            reply->abort();
-        }
-    });
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, handler = std::move(handler), requestUrl, timeoutMs, elapsed]() {
+                const QByteArray body = reply->readAll();
+                reply->deleteLater();
 
-    connect(reply, &QNetworkReply::finished, this, [reply, handler = std::move(handler)]() {
-        const bool timedOut = reply->property("xqTimedOut").toBool();
-        const QByteArray body = reply->readAll();
-        reply->deleteLater();
+                if (reply->error() != QNetworkReply::NoError) {
+                    const AiErrorInfo info =
+                        classifyFailure(reply, requestUrl, body, elapsed.elapsed(), timeoutMs);
+                    qWarning().noquote() << "[NET] request failed | kind="
+                                         << errorKindName(info.kind)
+                                         << "| url=" << sanitizedUrl(requestUrl)
+                                         << "| elapsed=" << elapsed.elapsed() << "ms";
+                    rememberDiagnostic(info);
+                    handler(false, QString(), info);
+                    return;
+                }
 
-        if (reply->error() != QNetworkReply::NoError) {
-            const QString message = networkFailureMessage(reply, timedOut, body);
-            qWarning().noquote() << "AI request failed:" << reply->errorString() << message;
-            handler(false, QString(), message);
-            return;
-        }
+                const QJsonDocument document = QJsonDocument::fromJson(body);
+                const QJsonArray choices =
+                    document.object().value(QStringLiteral("choices")).toArray();
+                if (choices.isEmpty()) {
+                    AiErrorInfo info = localFailure(
+                        AiErrorKind::Parse,
+                        document.isObject()
+                            ? QStringLiteral("AI 返回内容为空")
+                            : QStringLiteral("AI 返回数据异常，请检查 Base URL 是否指向兼容 OpenAI 的接口"));
+                    info.diagnostic = QStringLiteral("kind=API_PARSE\nhttp=200\nbody=%1")
+                                          .arg(maskedBody(body));
+                    qWarning().noquote() << "[NET] parse failed | url=" << sanitizedUrl(requestUrl);
+                    rememberDiagnostic(info);
+                    handler(false, QString(), info);
+                    return;
+                }
 
-        const QJsonDocument document = QJsonDocument::fromJson(body);
-        const QJsonArray choices = document.object().value(QStringLiteral("choices")).toArray();
-        if (choices.isEmpty()) {
-            handler(false, QString(),
-                    document.isObject()
-                        ? QStringLiteral("AI 返回内容为空")
-                        : QStringLiteral("AI 返回内容无法解析，请检查 Base URL 是否指向兼容 OpenAI 的接口"));
-            return;
-        }
+                const QString content = choices.first()
+                                            .toObject()
+                                            .value(QStringLiteral("message"))
+                                            .toObject()
+                                            .value(QStringLiteral("content"))
+                                            .toString()
+                                            .trimmed();
+                if (content.isEmpty()) {
+                    AiErrorInfo info = localFailure(AiErrorKind::Parse,
+                                                    QStringLiteral("AI 返回内容为空"));
+                    info.diagnostic = QStringLiteral("kind=API_PARSE\nhttp=200\nbody=%1")
+                                          .arg(maskedBody(body));
+                    rememberDiagnostic(info);
+                    handler(false, QString(), info);
+                    return;
+                }
 
-        const QString content = choices.first()
-                                    .toObject()
-                                    .value(QStringLiteral("message"))
-                                    .toObject()
-                                    .value(QStringLiteral("content"))
-                                    .toString()
-                                    .trimmed();
-        if (content.isEmpty()) {
-            handler(false, QString(), QStringLiteral("AI 返回内容为空"));
-            return;
-        }
-
-        handler(true, content, QString());
-    });
+                handler(true, content, AiErrorInfo{});
+            });
 }
 
 void AiManager::generateAwardSpeech(const QString &winnerName)
@@ -448,9 +603,9 @@ void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
     payload.insert(QStringLiteral("stream"), false);
 
     postChat(payload, apiKey_, endpoint, kRequestTimeoutMs,
-             [this, kind](bool ok, const QString &content, const QString &error) {
+             [this, kind](bool ok, const QString &content, const AiErrorInfo &error) {
                  if (!ok) {
-                     emitFailure(kind, error);
+                     emitFailure(kind, error.userMessage);
                      return;
                  }
 
@@ -476,18 +631,26 @@ void AiManager::requestCompletion(const QString &prompt, RequestKind kind)
 void AiManager::postOcrChat(const QString &prompt, int timeoutMs, ChatHandler handler)
 {
     if (!ensureApiKey()) {
-        handler(false, QString(), missingKeyMessage());
+        AiErrorInfo info = localFailure(AiErrorKind::Other, missingKeyMessage());
+        rememberDiagnostic(info);
+        handler(false, QString(), info);
         return;
     }
 
     const QString endpoint = endpointUrl();
     const QUrl url(endpoint);
     if (!url.isValid() || url.host().isEmpty()) {
-        handler(false, QString(), QStringLiteral("AI 接口地址无效，请在设置页检查"));
+        AiErrorInfo info = localFailure(AiErrorKind::Other,
+                                        QStringLiteral("AI 接口地址无效，请在设置页检查"));
+        rememberDiagnostic(info);
+        handler(false, QString(), info);
         return;
     }
     if (!isSecureEndpoint(url)) {
-        handler(false, QString(), QStringLiteral("AI 接口地址必须使用 https（本机地址除外）"));
+        AiErrorInfo info = localFailure(
+            AiErrorKind::Other, QStringLiteral("AI 接口地址必须使用 https（本机地址除外）"));
+        rememberDiagnostic(info);
+        handler(false, QString(), info);
         return;
     }
 
@@ -603,9 +766,9 @@ void AiManager::ocrScoresFromImage(const QString &filePath)
 
     emit ocrProgress(QStringLiteral("AI 正在读取成绩单..."));
     postOcrChat(scoresPrompt(), kOcrTimeoutMs,
-                [this](bool ok, const QString &content, const QString &error) {
+                [this](bool ok, const QString &content, const AiErrorInfo &error) {
                     if (!ok) {
-                        failOcr(error);
+                        failOcr(error.userMessage);
                         return;
                     }
 
@@ -622,9 +785,9 @@ void AiManager::ocrScoresFromImage(const QString &filePath)
 void AiManager::requestOcrCategory()
 {
     postOcrChat(categoryPrompt(), kOcrTimeoutMs,
-                [this](bool ok, const QString &content, const QString &error) {
+                [this](bool ok, const QString &content, const AiErrorInfo &error) {
                     if (!ok) {
-                        failOcr(error);
+                        failOcr(error.userMessage);
                         return;
                     }
 
@@ -641,9 +804,9 @@ void AiManager::requestOcrCategory()
 void AiManager::requestOcrExtraction()
 {
     postOcrChat(extractionPrompt(ocrCategory_, false), kOcrTimeoutMs,
-                [this](bool ok, const QString &content, const QString &error) {
+                [this](bool ok, const QString &content, const AiErrorInfo &error) {
                     if (!ok) {
-                        failOcr(error);
+                        failOcr(error.userMessage);
                         return;
                     }
 
@@ -656,7 +819,7 @@ void AiManager::requestOcrExtraction()
                     emit ocrProgress(QStringLiteral("正在二次校验提取结果..."));
                     postOcrChat(extractionPrompt(ocrCategory_, true), kOcrTimeoutMs,
                                 [this](bool verified, const QString &secondContent,
-                                       const QString &) {
+                                       const AiErrorInfo &) {
                                     // 第二遍失败时直接采用第一遍的结果，不再要求用户重来
                                     if (!verified) {
                                         emit ocrRosterReady(ocrFirstPass_);
@@ -677,7 +840,7 @@ void AiManager::requestOcrExtraction()
 void AiManager::requestOcrVerification()
 {
     postOcrChat(verificationPrompt(ocrCategory_), kOcrTimeoutMs,
-                [this](bool ok, const QString &content, const QString &) {
+                [this](bool ok, const QString &content, const AiErrorInfo &) {
                     QStringList third;
                     if (ok) {
                         third = parseNameLines(content);
