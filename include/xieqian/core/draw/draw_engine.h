@@ -4,6 +4,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "xieqian/core/roster/roster.h"
@@ -52,7 +53,8 @@ private:
                                                         const std::vector<double> *weights = nullptr);
 
     std::mt19937_64 rng_;
-    std::vector<std::string> drawnIds_;
+    // 已中签集合：千人名单下“每人查一次”不能是线性扫描
+    std::unordered_set<std::string> drawnIds_;
     bool dynamicWeights_ = false;
 };
 

@@ -11,6 +11,7 @@
 #include <QQuickWindow>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QTimer>
 
 #include "backend_bridge.h"
 
@@ -269,7 +270,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("XieQian"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.2.5"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("1.2.6"));
     // 任务栏与窗口图标：rc 资源负责 exe 图标，这里保证运行时窗口也用同一枚图标
     app.setWindowIcon(QIcon(QStringLiteral(":/ui/assets/app-icon-512.png")));
 
@@ -319,12 +320,19 @@ int main(int argc, char *argv[])
                                               [socket, &engine]() {
                                                   const QByteArray message = socket->readAll();
                                                   if (message.startsWith("ACTIVATE")) {
-                                                      QQuickWindow *window = nullptr;
-                                                      if (!engine.rootObjects().isEmpty()) {
-                                                          window = qobject_cast<QQuickWindow *>(
-                                                              engine.rootObjects().constFirst());
-                                                      }
-                                                      activateMainWindow(window);
+                                                      // 排到事件循环空闲再抢前台：在 socket 回调里同步
+                                                      // showNormal 会嵌套处理窗口事件，主线程被占满时次实例
+                                                      // 会一直等不到响应而卡死。
+                                                      QTimer::singleShot(0, &engine, [&engine]() {
+                                                          QQuickWindow *window = nullptr;
+                                                          if (!engine.rootObjects().isEmpty()) {
+                                                              window = qobject_cast<QQuickWindow *>(
+                                                                  engine.rootObjects().constFirst());
+                                                          }
+                                                          activateMainWindow(window);
+                                                          qInfo().noquote()
+                                                              << "[LIFE] activated by second instance";
+                                                      });
                                                   }
                                                   socket->disconnectFromServer();
                                               });

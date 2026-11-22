@@ -21,6 +21,8 @@ Item {
     property string removeTargetName: ""
     property string statusMessage: ""
     property bool statusFailed: false
+    // 文件解析在后台线程进行，期间禁止重复发起
+    property bool importBusy: false
 
     readonly property int totalCount: backendBridge.rosterCount
 
@@ -51,17 +53,29 @@ Item {
         removeDialog.open()
     }
 
-    // 直接导入到名单池：支持姓名、学号、班级多列，编码由后端自动识别
+    // 直接导入到名单池：支持姓名、学号、班级多列，编码由后端自动识别。
+    // 解析在工作线程完成，结果通过 rosterImportFinished 回到主线程入库。
     function importRoster() {
+        if (importBusy)
+            return
+
         var path = backendBridge.chooseRosterFilePath()
         if (!path || path.length === 0)
             return
 
-        var entries = backendBridge.readRosterFromFile(path)
-        if (entries.length === 0) {
+        importBusy = true
+        statusFailed = false
+        statusMessage = "正在读取文件…"
+        statusTimer.stop()
+        backendBridge.requestRosterImport(path, "roster")
+    }
+
+    function finishRosterImport(entries, errorText) {
+        importBusy = false
+
+        if (errorText.length > 0 || entries.length === 0) {
             statusFailed = true
-            var detail = backendBridge.lastError()
-            statusMessage = detail.length > 0 ? detail : "没有从文件里读到名单"
+            statusMessage = errorText.length > 0 ? errorText : "没有从文件里读到名单"
             statusTimer.restart()
             return
         }
@@ -93,6 +107,11 @@ Item {
 
         function onHistoryUpdated() {
             page.refresh()
+        }
+
+        function onRosterImportFinished(requestId, entries, errorText) {
+            if (requestId === "roster")
+                page.finishRosterImport(entries, String(errorText))
         }
     }
 
@@ -137,8 +156,9 @@ Item {
                 RosterButton {
                     width: 104
                     height: 32
-                    text: "导入名单"
+                    text: page.importBusy ? "读取中…" : "导入名单"
                     primary: true
+                    enabled: !page.importBusy
                     onClicked: page.importRoster()
                 }
 

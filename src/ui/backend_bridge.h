@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <vector>
 
+#include <QHash>
 #include <QObject>
 #include <QSqlDatabase>
 #include <QString>
@@ -44,8 +46,9 @@ public:
     Q_INVOKABLE QVariantList drawMultipleWinners();
     Q_INVOKABLE void updateDrawSettings(int count, int strategy);
     Q_INVOKABLE QString chooseRosterFilePath();
-    // 读取名单文件并返回 [{name, studentId, group}]；编码自动识别（UTF-8/UTF-16/GBK）
-    Q_INVOKABLE QVariantList readRosterFromFile(const QString &filePath);
+    // 在后台线程解析名单文件（编码识别 + 分列），完成后通过 rosterImportFinished 回主线程；
+    // requestId 用于区分同时发起的多个导入请求
+    Q_INVOKABLE void requestRosterImport(const QString &filePath, const QString &requestId);
     Q_INVOKABLE int appendEntriesToRoster(const QVariantList &entries);
     Q_INVOKABLE int applyScoreWeights(const QVariantList &entries);
     Q_INVOKABLE void resetDrawStats();
@@ -108,6 +111,7 @@ public:
 
 signals:
     void rosterUpdated();
+    void rosterImportFinished(const QString &requestId, const QVariantList &entries, const QString &error);
     void historyUpdated();
     void drawSettingsChanged();
     void winnerDrawn(const QString &name);
@@ -137,6 +141,13 @@ private:
     [[nodiscard]] xieqian::core::DrawStrategy strategyFor() const;
     [[nodiscard]] double calculateEffectiveWeight(const xieqian::core::Participant &participant) const;
     [[nodiscard]] double effectiveWeight(const xieqian::core::Participant &participant) const;
+    // id → 下标索引：转盘刷新时 QML 会按人查询权重，线性扫描在千人名单上会退化成 O(n²)
+    void rebuildRosterIndex() const;
+    void invalidateRosterIndex() const;
+    // 抽奖快照的权重取证日志：证明动态权重真的参与了本次抽样
+    void logWeightSnapshot(const std::vector<xieqian::core::Participant> &snapshot,
+                           const std::vector<double> &baseWeights) const;
+    void logWinnerWeights(const std::vector<std::string> &winnerIds) const;
     void applyData(const QJsonObject &root);
     [[nodiscard]] QJsonObject stateToJson() const;
     // 合并短时间内的多次改动后落盘；退出与导入时走同步 flush
@@ -165,6 +176,9 @@ private:
 
     std::shared_ptr<xieqian::core::Roster> roster_;
     std::unique_ptr<xieqian::core::DrawEngine> drawEngine_;
+    // 用 mutable 缓存，让 const 查询接口也能命中索引
+    mutable QHash<QString, std::size_t> rosterIndexById_;
+    mutable bool rosterIndexDirty_ = true;
     std::unique_ptr<AiManager> aiManager_;
     QSqlDatabase database_;
     QTimer *saveTimer_ = nullptr;

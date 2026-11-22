@@ -1,7 +1,9 @@
 #include "backend_bridge.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <random>
 #include <string>
 #include <utility>
@@ -65,7 +67,19 @@ constexpr auto kCfgFirstRunSeen = "first_run_seen";
 std::mt19937_64 seededGenerator()
 {
     std::random_device device;
-    std::seed_seq seed{device(), device(), device(), device()};
+    // 时间戳与对象地址一起进 seed_seq：部分平台的 random_device 会退化为确定性
+    // 序列，单靠它无法保证每次启动的抽奖顺序不同。
+    const std::uint64_t ticks = static_cast<std::uint64_t>(
+        std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    const std::uint64_t wall = static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    std::seed_seq seed{static_cast<std::uint32_t>(device()),
+                       static_cast<std::uint32_t>(device()),
+                       static_cast<std::uint32_t>(ticks),
+                       static_cast<std::uint32_t>(ticks >> 32),
+                       static_cast<std::uint32_t>(wall),
+                       static_cast<std::uint32_t>(wall >> 32),
+                       static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&device)),
+                       static_cast<std::uint32_t>(device())};
     return std::mt19937_64(seed);
 }
 
@@ -476,6 +490,7 @@ bool BackendBridge::readState()
     }
 
     roster_->clear();
+    invalidateRosterIndex();
     {
         QSqlQuery query(database_);
         query.prepare(QStringLiteral(
@@ -826,13 +841,13 @@ QString BackendBridge::drawWinner()
     // 原始名单在开奖前保持不变，避免半途改写导致概率与展示不一致。
     std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
     if (dynamicWeights_) {
-        double totalWeight = 0.0;
+        std::vector<double> baseWeights;
+        baseWeights.reserve(snapshot.size());
         for (xieqian::core::Participant &participant : snapshot) {
+            baseWeights.push_back(participant.weight);
             participant.weight = calculateEffectiveWeight(participant);
-            totalWeight += participant.weight;
         }
-        qInfo().nospace() << "[dynamic-weight] applied to " << snapshot.size()
-                          << " participants, total effective weight=" << totalWeight;
+        logWeightSnapshot(snapshot, baseWeights);
     }
 
     const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
@@ -856,13 +871,13 @@ QVariantList BackendBridge::drawMultipleWinners()
 
     std::vector<xieqian::core::Participant> snapshot = roster_->enabledParticipants();
     if (dynamicWeights_) {
-        double totalWeight = 0.0;
+        std::vector<double> baseWeights;
+        baseWeights.reserve(snapshot.size());
         for (xieqian::core::Participant &participant : snapshot) {
+            baseWeights.push_back(participant.weight);
             participant.weight = calculateEffectiveWeight(participant);
-            totalWeight += participant.weight;
         }
-        qInfo().nospace() << "[dynamic-weight] applied to " << snapshot.size()
-                          << " participants, total effective weight=" << totalWeight;
+        logWeightSnapshot(snapshot, baseWeights);
     }
 
     const std::vector<xieqian::core::Participant> frozen = std::move(snapshot);
@@ -950,16 +965,114 @@ double BackendBridge::effectiveWeight(const xieqian::core::Participant &particip
     return 1.0;
 }
 
-double BackendBridge::getEffectiveWeight(const QString &id) const
+void BackendBridge::rebuildRosterIndex() const
 {
-    const std::string key = id.toStdString();
+    rosterIndexById_.clear();
+    rosterIndexById_.reserve(static_cast<int>(roster_->size()));
     for (std::size_t index = 0; index < roster_->size(); ++index) {
-        const xieqian::core::Participant &participant = roster_->at(index);
-        if (xieqian::core::participantId(participant) == key) {
-            return effectiveWeight(participant);
+        const QString id =
+            QString::fromStdString(xieqian::core::participantId(roster_->at(index)));
+        // 与线性扫描一致：重复标识只认第一次出现
+        if (!rosterIndexById_.contains(id)) {
+            rosterIndexById_.insert(id, index);
         }
     }
+    rosterIndexDirty_ = false;
+}
+
+void BackendBridge::invalidateRosterIndex() const
+{
+    rosterIndexDirty_ = true;
+}
+
+// 转盘刷新时 QML 会按人调用一次；基座是整个 enabled 名单，千人以上线性扫描会退化成 O(n²)
+double BackendBridge::getEffectiveWeight(const QString &id) const
+{
+    if (id.isEmpty() || roster_->size() == 0) {
+        return 0.0;
+    }
+
+    if (rosterIndexDirty_ || static_cast<std::size_t>(rosterIndexById_.size()) != roster_->size()) {
+        rebuildRosterIndex();
+    }
+
+    const auto resolve = [this, &id]() -> const xieqian::core::Participant * {
+        const auto it = rosterIndexById_.constFind(id);
+        if (it == rosterIndexById_.constEnd() || it.value() >= roster_->size()) {
+            return nullptr;
+        }
+        const xieqian::core::Participant &participant = roster_->at(it.value());
+        // 索引过期（名单刚增删）时不能拿错人：校验失败直接当未命中
+        if (QString::fromStdString(xieqian::core::participantId(participant)) != id) {
+            return nullptr;
+        }
+        return &participant;
+    };
+
+    if (const auto *participant = resolve()) {
+        return effectiveWeight(*participant);
+    }
+
+    // 索引与名单不一致：重建一次再查，避免返回 0 导致扇区突然消失
+    rebuildRosterIndex();
+    if (const auto *participant = resolve()) {
+        return effectiveWeight(*participant);
+    }
     return 0.0;
+}
+
+void BackendBridge::logWeightSnapshot(const std::vector<xieqian::core::Participant> &snapshot,
+                                      const std::vector<double> &baseWeights) const
+{
+    double total = 0.0;
+    for (const xieqian::core::Participant &participant : snapshot) {
+        total += participant.weight;
+    }
+
+    qDebug().noquote() << QStringLiteral("[WEIGHT] snapshot | pool=%1 | total=%2 | dynamic=on")
+                              .arg(snapshot.size())
+                              .arg(QString::number(total, 'f', 6));
+
+    constexpr std::size_t kPreview = 8;
+    const std::size_t preview = std::min(snapshot.size(), kPreview);
+    for (std::size_t index = 0; index < preview; ++index) {
+        const xieqian::core::Participant &participant = snapshot[index];
+        const double base = index < baseWeights.size() ? baseWeights[index] : 0.0;
+        qDebug().noquote()
+            << QStringLiteral("[WEIGHT]   %1 | drawCount=%2 | streak=%3 | base=%4 | effective=%5")
+                   .arg(QString::fromStdString(participant.name))
+                   .arg(participant.drawCount)
+                   .arg(participant.streak)
+                   .arg(QString::number(base, 'f', 3))
+                   .arg(QString::number(participant.weight, 'f', 6));
+    }
+    if (snapshot.size() > preview) {
+        qDebug().noquote() << QStringLiteral("[WEIGHT]   ... %1 more")
+                                  .arg(snapshot.size() - preview);
+    }
+}
+
+void BackendBridge::logWinnerWeights(const std::vector<std::string> &winnerIds) const
+{
+    if (!dynamicWeights_ || winnerIds.empty()) {
+        return;
+    }
+
+    for (const std::string &id : winnerIds) {
+        for (std::size_t index = 0; index < roster_->size(); ++index) {
+            const xieqian::core::Participant &participant = roster_->at(index);
+            if (xieqian::core::participantId(participant) != id) {
+                continue;
+            }
+            qDebug().noquote()
+                << QStringLiteral("[WEIGHT] after-draw | %1 | drawCount=%2 | streak=%3 | effective=%4")
+                       .arg(QString::fromStdString(participant.name))
+                       .arg(participant.drawCount)
+                       .arg(participant.streak)
+                       .arg(QString::number(xieqian::core::dynamicWeight(participant), 'f', 6));
+            break;
+        }
+    }
 }
 
 void BackendBridge::recordDraw(const std::vector<xieqian::core::Participant> &winners)
@@ -979,6 +1092,8 @@ void BackendBridge::recordDraw(const std::vector<xieqian::core::Participant> &wi
     }
 
     roster_->recordWins(ids);
+    // 中奖者的 drawCount/streak 已更新，打出写回后的有效权重作为动态权重生效的凭据
+    logWinnerWeights(ids);
     saveState();
     emit historyUpdated();
     emit rosterUpdated();
@@ -1028,6 +1143,7 @@ void BackendBridge::clearAllData()
 {
     // 只抹掉名单与历史；AI 配置、自定义转盘与偏好设置属于用户资产，必须保留
     roster_->clear();
+    invalidateRosterIndex();
     history_.clear();
     pendingHistory_.clear();
     historyRewritePending_ = true;
@@ -1050,51 +1166,87 @@ void BackendBridge::resetDrawStats()
 // 名单
 // ─────────────────────────────────────────────────────────────
 
-QVariantList BackendBridge::readRosterFromFile(const QString &filePath)
+void BackendBridge::requestRosterImport(const QString &filePath, const QString &requestId)
 {
-    QVariantList entries;
     lastError_.clear();
 
     if (filePath.isEmpty()) {
-        lastError_ = QStringLiteral("没有选择文件");
-        return entries;
+        emit rosterImportFinished(requestId, QVariantList{}, QStringLiteral("没有选择文件"));
+        return;
     }
 
-    const xieqian::ui::DecodedText decoded = xieqian::ui::decodeTextFile(filePath);
-    if (!decoded.ok) {
-        lastError_ = decoded.error;
-        return entries;
-    }
+    struct ParsedRoster {
+        QVariantList entries;
+        QString error;
+    };
 
-    xieqian::core::Roster parsed;
-    xieqian::core::FileParser parser;
-    const bool csvMode = xieqian::core::FileParser::usesCsvFormat(
-        QFile::encodeName(filePath).toStdString());
-    if (!parser.parseText(decoded.text.toStdString(), csvMode, parsed)) {
-        lastError_ = QString::fromStdString(parser.lastError());
-        return entries;
-    }
+    // 文件 IO、编码识别与分列都在工作线程完成；千人名单也不会卡住主线程。
+    auto *watcher = new QFutureWatcher<ParsedRoster>(this);
+    connect(watcher, &QFutureWatcher<ParsedRoster>::finished, this, [this, watcher, requestId]() {
+        const ParsedRoster parsed = watcher->result();
+        watcher->deleteLater();
+        if (!parsed.error.isEmpty()) {
+            lastError_ = parsed.error;
+        }
+        qDebug().noquote() << QStringLiteral("[IMPORT] parsed | request=%1 | entries=%2")
+                                  .arg(requestId)
+                                  .arg(parsed.entries.size());
+        emit rosterImportFinished(requestId, parsed.entries, parsed.error);
+    });
 
-    for (std::size_t index = 0; index < parsed.size(); ++index) {
-        const xieqian::core::Participant &participant = parsed.at(index);
-        const QString name = QString::fromStdString(participant.name).trimmed();
-        if (name.isEmpty()) {
-            continue;
+    watcher->setFuture(QtConcurrent::run([filePath]() {
+        ParsedRoster parsed;
+        const xieqian::ui::DecodedText decoded = xieqian::ui::decodeTextFile(filePath);
+        if (!decoded.ok) {
+            parsed.error = decoded.error;
+            return parsed;
         }
 
-        QVariantMap entry;
-        entry.insert(QStringLiteral("name"), name);
-        entry.insert(QStringLiteral("studentId"), QString::fromStdString(participant.studentId).trimmed());
-        entry.insert(QStringLiteral("group"), QString::fromStdString(participant.group).trimmed());
-        entry.insert(QStringLiteral("weight"), participant.weight);
-        entries.append(entry);
-    }
+        xieqian::core::Roster roster;
+        xieqian::core::FileParser parser;
+        const bool csvMode = xieqian::core::FileParser::usesCsvFormat(
+            QFile::encodeName(filePath).toStdString());
+        if (!parser.parseText(decoded.text.toStdString(), csvMode, roster)) {
+            parsed.error = QString::fromStdString(parser.lastError());
+            return parsed;
+        }
 
-    return entries;
+        parsed.entries.reserve(static_cast<qsizetype>(roster.size()));
+        for (std::size_t index = 0; index < roster.size(); ++index) {
+            const xieqian::core::Participant &participant = roster.at(index);
+            const QString name = QString::fromStdString(participant.name).trimmed();
+            if (name.isEmpty()) {
+                continue;
+            }
+
+            QVariantMap entry;
+            entry.insert(QStringLiteral("name"), name);
+            entry.insert(QStringLiteral("studentId"),
+                         QString::fromStdString(participant.studentId).trimmed());
+            entry.insert(QStringLiteral("group"), QString::fromStdString(participant.group).trimmed());
+            entry.insert(QStringLiteral("weight"), participant.weight);
+            parsed.entries.append(entry);
+        }
+        return parsed;
+    }));
 }
 
 int BackendBridge::appendEntriesToRoster(const QVariantList &entries)
 {
+    if (entries.isEmpty()) {
+        return 0;
+    }
+
+    // 同名同（或缺失）学号视为同一人；同名不同学号允许并存。
+    // 用 姓名 → 已有学号 的表代替嵌套扫描，千人名单下不再 O(n²)。
+    QHash<QString, QVector<QString>> existingByName;
+    existingByName.reserve(static_cast<qsizetype>(roster_->size()));
+    for (std::size_t index = 0; index < roster_->size(); ++index) {
+        const xieqian::core::Participant &participant = roster_->at(index);
+        existingByName[QString::fromStdString(participant.name)].append(
+            QString::fromStdString(participant.studentId));
+    }
+
     int added = 0;
     for (const QVariant &value : entries) {
         const QVariantMap entry = value.toMap();
@@ -1106,17 +1258,14 @@ int BackendBridge::appendEntriesToRoster(const QVariantList &entries)
             continue;
         }
 
-        // 同名同（或缺失）学号视为同一人；同名不同学号允许并存，避免同名同学被误判
         bool exists = false;
-        for (std::size_t index = 0; index < roster_->size(); ++index) {
-            const xieqian::core::Participant &participant = roster_->at(index);
-            if (QString::fromStdString(participant.name) != name) {
-                continue;
-            }
-            const QString existingId = QString::fromStdString(participant.studentId);
-            if (studentId.isEmpty() || existingId.isEmpty() || existingId == studentId) {
-                exists = true;
-                break;
+        const auto known = existingByName.constFind(name);
+        if (known != existingByName.constEnd()) {
+            for (const QString &existingId : known.value()) {
+                if (studentId.isEmpty() || existingId.isEmpty() || existingId == studentId) {
+                    exists = true;
+                    break;
+                }
             }
         }
         if (exists) {
@@ -1131,10 +1280,12 @@ int BackendBridge::appendEntriesToRoster(const QVariantList &entries)
             participant.weight = std::clamp(rawWeight, kMinWeight, kMaxWeight);
         }
         roster_->add(std::move(participant));
+        existingByName[name].append(studentId);
         ++added;
     }
 
     if (added > 0) {
+        invalidateRosterIndex();
         saveState();
         emit rosterUpdated();
     }
@@ -1207,6 +1358,7 @@ bool BackendBridge::removeParticipant(const QString &id)
     for (std::size_t index = 0; index < roster_->size(); ++index) {
         if (xieqian::core::participantId(roster_->at(index)) == key) {
             roster_->removeAt(index);
+            invalidateRosterIndex();
             saveState();
             emit rosterUpdated();
             return true;
@@ -1852,6 +2004,7 @@ QJsonObject BackendBridge::stateToJson() const
 void BackendBridge::applyData(const QJsonObject &root)
 {
     roster_->clear();
+    invalidateRosterIndex();
     for (const QJsonValue &value : root.value(QStringLiteral("roster")).toArray()) {
         const QJsonObject entry = value.toObject();
 

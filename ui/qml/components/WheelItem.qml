@@ -25,6 +25,9 @@ Item {
     property var itemIds: []
     // 绘制与落点共用同一份权重快照；刷新时才重新向后端查询
     property var resolvedWeights: []
+    // 归一化后的绘制快照：onPaint 只读这两项，不做后端查询也不改属性
+    property var sectorWeights: []
+    property real sectorWeightTotal: 0
     // 与 options 一一对应的“已中签”标记：防连抽模式下置灰显示
     property var dimmed: []
     property real angle: 0
@@ -84,6 +87,27 @@ Item {
 
     function refreshWeights() {
         resolvedWeights = resolveWeights()
+
+        var count = effectiveCount()
+        var weights = []
+        var total = 0
+        for (var i = 0; i < count; ++i) {
+            var weight = Number(resolvedWeights[i])
+            if (!isFinite(weight) || weight < 0)
+                weight = 1
+            weights.push(weight)
+            total += weight
+        }
+        // 全员权重为 0（例如防连抽时全部抽过）：退回等分，避免除零后画不出扇区
+        if (total <= 0) {
+            for (var j = 0; j < weights.length; ++j)
+                weights[j] = 1
+            total = weights.length
+        }
+
+        sectorWeights = weights
+        sectorWeightTotal = total
+
         if (sectorCanvas)
             sectorCanvas.requestPaint()
     }
@@ -96,31 +120,17 @@ Item {
         refreshWeights()
     }
 
-    // 归一化权重：非法、缺失按 1 处理；0 是合法值（概率为 0），全为 0 时退回等分
+    // 归一化权重：直接返回 refreshWeights() 建好的快照。
+    // 快照缺失（组件首帧）时用等分，不在这里调用后端，避免 onPaint 变成热路径。
     function weightList() {
         var count = effectiveCount()
-        var source = wheelRoot.resolvedWeights
-        if (!source || source.length !== count)
-            source = resolveWeights()
+        if (sectorWeights.length === count && sectorWeightTotal > 0)
+            return { "weights": sectorWeights, "total": sectorWeightTotal }
 
         var list = []
-        var total = 0
-
-        for (var i = 0; i < count; ++i) {
-            var weight = Number(source[i])
-            if (!isFinite(weight) || weight < 0)
-                weight = 1
-            list.push(weight)
-            total += weight
-        }
-
-        if (total <= 0) {
-            for (var j = 0; j < list.length; ++j)
-                list[j] = 1
-            total = list.length
-        }
-
-        return { "weights": list, "total": total }
+        for (var i = 0; i < count; ++i)
+            list.push(1)
+        return { "weights": list, "total": count }
     }
 
     // 扇区中心相对 12 点方向的角度（度），权重扇区不再等分
@@ -144,7 +154,8 @@ Item {
 
         // 只有扇区数量变了才重建快照；开奖后权重已变但列表长度不变，
         // 此时必须继续用开奖前的快照，保证指针落点与盘面几何一致
-        if (wheelRoot.resolvedWeights.length !== effectiveCount()) {
+        if (wheelRoot.resolvedWeights.length !== effectiveCount()
+                || wheelRoot.sectorWeights.length !== effectiveCount()) {
             refreshWeights()
         }
 

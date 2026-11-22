@@ -49,7 +49,7 @@ std::vector<Participant> DrawEngine::draw(const std::vector<Participant> &pool, 
         seen.reserve(pool.size());
         for (std::size_t index = 0; index < pool.size(); ++index) {
             const auto id = participantId(pool[index]);
-            const bool drawn = std::find(drawnIds_.begin(), drawnIds_.end(), id) != drawnIds_.end();
+            const bool drawn = drawnIds_.count(id) > 0;
             (drawn ? seen : unseen).push_back(index);
         }
     } else {
@@ -77,10 +77,7 @@ std::vector<Participant> DrawEngine::draw(const std::vector<Participant> &pool, 
 
     if (strategy == DrawStrategy::NoRepeat) {
         for (const Participant &winner : winners) {
-            const auto id = participantId(winner);
-            if (std::find(drawnIds_.begin(), drawnIds_.end(), id) == drawnIds_.end()) {
-                drawnIds_.push_back(id);
-            }
+            drawnIds_.insert(participantId(winner));
         }
     }
     return winners;
@@ -126,8 +123,7 @@ void DrawEngine::clearDrawnHistory()
 
 bool DrawEngine::isDrawn(const Participant &participant) const
 {
-    const auto id = participantId(participant);
-    return std::find(drawnIds_.begin(), drawnIds_.end(), id) != drawnIds_.end();
+    return drawnIds_.count(participantId(participant)) > 0;
 }
 
 void DrawEngine::setDynamicWeights(bool enabled)
@@ -176,14 +172,24 @@ std::vector<Participant> DrawEngine::drawWeighted(const std::vector<Participant>
         return dynamicWeights_ ? dynamicWeight(participant) : std::max(0.0, participant.weight);
     };
 
+    // 权重总和低于该阈值即视为“全部衰减到 0”：轮盘采样在总和为 0 时永远
+    // 抽不出人，而 exp(-drawCount/3) 反复相乘后可能先下溢成 0 或 NaN。
+    constexpr double kMinTotalWeight = 1e-9;
+
     while (winners.size() < count && !remaining.empty()) {
         double totalWeight = 0.0;
+        bool weightsUsable = true;
         for (std::size_t index = 0; index < remaining.size(); ++index) {
-            totalWeight += weightOf(index, remaining[index]);
+            const double weight = weightOf(index, remaining[index]);
+            if (!std::isfinite(weight) || weight < 0.0) {
+                weightsUsable = false;
+                break;
+            }
+            totalWeight += weight;
         }
 
         std::size_t picked = remaining.size() - 1;
-        if (totalWeight <= 0.0) {
+        if (!weightsUsable || !std::isfinite(totalWeight) || totalWeight <= kMinTotalWeight) {
             std::uniform_int_distribution<std::size_t> uniform(0, remaining.size() - 1);
             picked = uniform(rng_);
         } else {

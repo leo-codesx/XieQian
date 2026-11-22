@@ -25,6 +25,8 @@ Item {
     property string errorMessage: ""
 
     property bool ocrBusy: false
+    // 文件解析在后台线程进行，期间禁止重复发起并给出状态提示
+    property bool importBusy: false
     property string ocrStatus: ""
     property string importMessage: ""
     property bool importFailed: false
@@ -178,18 +180,25 @@ Item {
     }
 
     function importRosterFile() {
-        if (ocrBusy)
+        if (ocrBusy || importBusy)
             return
 
         var path = backendBridge.chooseRosterFilePath()
         if (!path || path.length === 0)
             return
 
-        var entries = backendBridge.readRosterFromFile(path)
-        if (entries.length === 0) {
+        importBusy = true
+        importFailed = false
+        importMessage = "正在读取文件…"
+        backendBridge.requestRosterImport(path, "addPage")
+    }
+
+    function completeRosterImport(entries, error) {
+        importBusy = false
+
+        if (error.length > 0 || entries.length === 0) {
             importFailed = true
-            var detail = backendBridge.lastError()
-            importMessage = detail.length > 0 ? detail : "没有从文件里读到名字，请检查文件内容"
+            importMessage = error.length > 0 ? error : "没有从文件里读到名字，请检查文件内容"
             return
         }
 
@@ -279,6 +288,15 @@ Item {
             page.ocrBusy = false
             page.ocrStatus = ""
             aiKeyDialog.open()
+        }
+    }
+
+    Connections {
+        target: backendBridge
+
+        function onRosterImportFinished(requestId, entries, errorText) {
+            if (requestId === "addPage")
+                page.completeRosterImport(entries, String(errorText))
         }
     }
 
@@ -414,9 +432,9 @@ Item {
                                     ImportButton {
                                         width: 124
                                         height: 38
-                                        text: "导入"
+                                        text: page.importBusy ? "读取中…" : "导入"
                                         primary: true
-                                        enabled: !page.ocrBusy
+                                        enabled: !page.ocrBusy && !page.importBusy
                                         onClicked: page.importRosterFile()
                                     }
 
@@ -424,7 +442,7 @@ Item {
                                         width: 124
                                         height: 38
                                         text: page.ocrBusy ? "识别中…" : "图片导入"
-                                        enabled: !page.ocrBusy
+                                        enabled: !page.ocrBusy && !page.importBusy
                                         onClicked: page.startImageImport()
                                     }
                                 }

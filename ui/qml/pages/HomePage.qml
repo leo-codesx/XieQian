@@ -265,6 +265,10 @@ Item {
             refreshRosterOptions()
         }
 
+        // 中奖者 drawCount 已增加：用最新有效权重立即重绘，扇区变窄必须肉眼可见
+        if (!customWheel)
+            wheelItem.requestWeightsRefresh()
+
         // 自定义转盘在前端随机，后端不知道结果，这里补齐历史记录
         if (customWheel) {
             for (var i = 0; i < lastWinners.length; ++i)
@@ -440,11 +444,8 @@ Item {
             }
         }
 
-        // 舞台投影（放在卡片后方，避免被 clip: true 裁掉）
-        CardShadowBehind {
-            target: stageCard
-        }
-
+        // 舞台不再叠 MultiEffect 投影：转盘旋转时阴影层会跟着重合成，
+        // 改用 1px 描边 + 纯色底保持层次，GPU 只画一层
         Rectangle {
             id: stageCard
             anchors.top: parent.top
@@ -455,7 +456,7 @@ Item {
             radius: Theme.radiusCard
             color: Theme.surface
             border.width: 1
-            border.color: Theme.withAlpha(Theme.maskBase, 0.045)
+            border.color: Theme.withAlpha(Theme.maskBase, 0.10)
             clip: true
 
             // 右上角柔和品牌光晕
